@@ -149,3 +149,45 @@ export interface RemoteRepo {
   watchedSourceId: string | null;
   viaAccount: boolean;
 }
+
+export interface ActivityEvent {
+  id: number;
+  ts: number;
+  type: 'opened' | 'checks_passed' | 'checks_failed' | 'commit_pushed' | 'merged' | 'closed';
+  detail: string | null;
+  seen: boolean;
+}
+
+/** Ein Pull Request (oder Commit), den lxnEye erstellt hat, mit aktuellem Stand und Zeitleiste */
+export interface ActivityGroup {
+  groupId: string;
+  updateId: string;
+  kind: 'update' | 'rollback';
+  mode: 'pr' | 'commit';
+  status: 'open' | 'merged' | 'closed' | 'committed' | 'reverted' | 'failed';
+  prNumber: number | null;
+  prUrl: string | null;
+  sourceId: string;
+  sourceName: string;
+  createdAt: number;
+  actor: string | null;
+  checks: 'success' | 'failure' | 'pending' | 'none' | 'unknown' | null;
+  checksFailed: string[];
+  lastChecked: number | null;
+  canRollback: boolean;
+  changes: { name: string; from: string; to: string; files: string[] }[];
+  events: ActivityEvent[];
+  unseen: number;
+}
+
+export interface ScheduleStatus {
+  enabled: boolean;
+  scanIntervalMin: number;
+  watchIntervalMin: number;
+  running: boolean;
+  lastScan: { at: number; durationMs: number; sources: number; failed: number; trigger: 'zeitplan' | 'manuell' } | null;
+  nextScanAt: number | null;
+  lastWatchAt: number | null;
+  nextWatchAt: number;
+  options: { scan: number[]; watch: number[] };
+}

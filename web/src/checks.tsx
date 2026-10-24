@@ -20,9 +20,9 @@ const LABEL: Record<string, string> = {
 const CLASS: Record<string, string> = { success: 'ok', failure: 'danger', pending: 'info', none: 'neutral', unknown: 'neutral' };
 
 function tip(s: PrStatus): string {
-  if (s.checks === 'success') return `Alle ${s.total} ${s.total === 1 ? 'Prüfung ist' : 'Prüfungen sind'} erfolgreich durchgelaufen (CI/CD).`;
+  if (s.checks === 'success') return s.total > 0 ? `Alle ${s.total} ${s.total === 1 ? 'Prüfung ist' : 'Prüfungen sind'} erfolgreich durchgelaufen (CI/CD).` : 'Die automatischen Prüfungen (CI/CD) sind erfolgreich durchgelaufen.';
   if (s.checks === 'failure') return `Fehlgeschlagen: ${s.failed.join(', ')}. Im Pull Request siehst du die Details.`;
-  if (s.checks === 'pending') return `${s.running} von ${s.total} Prüfungen laufen noch.`;
+  if (s.checks === 'pending') return s.total > 0 ? `${s.running} von ${s.total} Prüfungen laufen noch.` : 'Die automatischen Prüfungen (CI/CD) laufen noch.';
   if (s.checks === 'none') return 'Für diesen Pull Request gibt es keine automatischen Prüfungen (CI/CD).';
   return 'Die Prüfungen konnten nicht gelesen werden. Der GitHub-Token braucht "Checks: Read-only" und "Commit statuses: Read-only".';
 }

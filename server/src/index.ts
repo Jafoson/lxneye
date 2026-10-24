@@ -1,7 +1,7 @@
 import { buildApp } from './app.js';
 import { ConfigError, loadConfig } from './config.js';
 import { configureHttp } from './http.js';
-import { scanAll } from './scan/run.js';
+import { startScheduler } from './scheduler.js';
 
 let cfg;
 try {
@@ -24,17 +24,11 @@ if (cfg.secretKey.startsWith('dev-only')) app.log.warn('SECRET_KEY nicht gesetzt
 await app.listen({ host: cfg.host, port: cfg.port });
 if (!cfg.devAuth) warmAuth().catch((err) => app.log.error({ err }, 'SSO-Anbieter nicht erreichbar. Die Anmeldung wird beim nächsten Versuch erneut probiert.'));
 
-let timer: NodeJS.Timeout | undefined;
-if (cfg.scanIntervalMs > 0) {
-  timer = setInterval(() => {
-    scanAll(ctx).catch((err) => app.log.error({ err }, 'Geplanter Scan fehlgeschlagen'));
-  }, cfg.scanIntervalMs);
-  timer.unref();
-}
+const scheduler = startScheduler(ctx, app.log);
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info(`${signal} empfangen, fahre herunter`);
-  if (timer) clearInterval(timer);
+  scheduler.stop();
   await app.close();
   ctx.db.close();
   process.exit(0);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, setCsrf } from './api';
 import { AddSourceDialog, AiDialog, BatchDialog, ConfirmDialog, DeleteSourceDialog, DetailDialog, EditSourceDialog, LinkDialog } from './dialogs';
+import { ActivityPage } from './activity';
 import { RepoPickerDialog } from './accounts';
 import { ChecksBadge } from './checks';
 import { LinkIcon } from './icons';
@@ -55,7 +56,7 @@ export function App() {
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
-  const view = hash.startsWith('#/einstellungen') ? 'settings' : 'dashboard';
+  const view = hash.startsWith('#/einstellungen') ? 'settings' : hash.startsWith('#/pull-requests') ? 'activity' : 'dashboard';
   const go = (to: string) => {
     window.location.hash = to;
   };
@@ -139,6 +140,36 @@ export function App() {
       window.clearTimeout(timer);
     };
   }, [authed, prKeys, load]);
+
+  // Aktivität: offene Pull Requests und neue Ereignisse (für das Abzeichen und kurze Hinweise)
+  const [activity, setActivity] = useState({ open: 0, unseen: 0 });
+  const knownEvents = useRef<Set<number> | null>(null);
+  const loadActivity = useCallback(async () => {
+    try {
+      const r = await api<{ open: number; unseen: number; recent: { id: number; type: string; detail: string | null; name: string | null; prNumber: number | null }[] }>('GET', '/api/activity/summary');
+      setActivity({ open: r.open, unseen: r.unseen });
+      if (knownEvents.current === null) {
+        knownEvents.current = new Set(r.recent.map((e) => e.id)); // beim ersten Laden nichts melden
+        return;
+      }
+      const fresh = r.recent.filter((e) => !(knownEvents.current as Set<number>).has(e.id));
+      for (const e of fresh) (knownEvents.current as Set<number>).add(e.id);
+      if (fresh.length > 0) {
+        const e = fresh[0] as (typeof fresh)[number];
+        setToast(`${e.name ?? 'Pull Request'}${e.prNumber ? ` (#${e.prNumber})` : ''}: ${e.detail ?? 'Änderung'}${fresh.length > 1 ? ` (+${fresh.length - 1} weitere)` : ''}`);
+        window.setTimeout(() => setToast(null), 8000);
+        if (fresh.some((x) => x.type === 'merged')) void load();
+      }
+    } catch {
+      /* beim nächsten Mal wieder */
+    }
+  }, [load]);
+  useEffect(() => {
+    if (!authed) return;
+    void loadActivity();
+    const t = window.setInterval(() => void loadActivity(), 30_000);
+    return () => window.clearInterval(t);
+  }, [authed, loadActivity]);
 
   const run = async (id: string, fn: () => Promise<unknown>, okMsg?: string) => {
     setBusyIds((b) => new Set(b).add(id));
@@ -331,6 +362,20 @@ export function App() {
           ))}
         </nav>
 
+        <nav class="nav" aria-label="Aktivität">
+          <div class="nav-title">Aktivität</div>
+          <button class="nav-item" aria-current={view === 'activity'} onClick={() => go('#/pull-requests')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style={{ flex: '0 0 auto' }}>
+              <circle cx="6" cy="6" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="18" r="2" /><path d="M6 8v8M18 16V9a3 3 0 0 0-3-3h-3m0 0 2-2m-2 2 2 2" />
+            </svg>
+            <span class="nav-text">
+              <span class="nav-name">Pull Requests</span>
+              <span class="nav-sub">{activity.open} offen</span>
+            </span>
+            {activity.unseen > 0 && <span class="pill info" title="Neue Änderungen">{activity.unseen} neu</span>}
+          </button>
+        </nav>
+
         <nav class="nav" aria-label="Schnellnavigation">
           <div class="nav-head">
             <div class="nav-title">Schnellnavigation</div>
@@ -365,7 +410,7 @@ export function App() {
           </button>
           {view === 'settings' && (
             <div class="subnav">
-              {[['konten', 'Konten'], ['quellen', 'Quellen'], ['ki', 'KI'], ['updates', 'Updates']].map(([id, label]) => (
+              {[['konten', 'Konten'], ['quellen', 'Quellen'], ['scans', 'Automatische Scans'], ['ki', 'KI'], ['updates', 'Updates']].map(([id, label]) => (
                 <a key={id} href={`#/einstellungen/${id}`} aria-current={hash.split('/')[2] === id}>
                   {label}
                 </a>
@@ -375,7 +420,11 @@ export function App() {
         </nav>
         </div>
 
-        {view === 'settings' ? (
+        {view === 'activity' ? (
+          <div class="main">
+            <ActivityPage onChanged={load} onNotify={notify} onSeen={loadActivity} onGotoSettings={() => undefined} />
+          </div>
+        ) : view === 'settings' ? (
           <div class="main">
             <SettingsPage
               sources={sources}

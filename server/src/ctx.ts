@@ -60,6 +60,11 @@ export interface UpdateRow {
   kind: 'update' | 'rollback';
   parent_id: string | null;
   group_id: string | null;
+  name: string | null;
+  head_sha: string | null;
+  checks_state: string | null;
+  checks_failed: string | null;
+  last_checked: number | null;
   mode: 'pr' | 'commit';
   file: string;
   from_version: string;

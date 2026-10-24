@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS updates (
   actor TEXT,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS update_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  detail TEXT,
+  seen INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_events_group ON update_events(group_id);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -158,6 +168,11 @@ export function openDb(dataDir: string): Db {
   ensureColumn(db, 'sources', 'provider', 'TEXT');
   ensureColumn(db, 'sources', 'account_id', 'TEXT');
   ensureColumn(db, 'updates', 'group_id', 'TEXT');
+  ensureColumn(db, 'updates', 'name', 'TEXT');
+  ensureColumn(db, 'updates', 'head_sha', 'TEXT');
+  ensureColumn(db, 'updates', 'checks_state', 'TEXT');
+  ensureColumn(db, 'updates', 'checks_failed', 'TEXT');
+  ensureColumn(db, 'updates', 'last_checked', 'INTEGER');
   return db;
 }
 

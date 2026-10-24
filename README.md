@@ -35,6 +35,12 @@ Oben auf **Einstellungen** klicken. Dort steht **Konten** an erster Stelle: GitH
 
 Selbst gehostetes GitLab: `GITLAB_URL=https://gitlab.example.com`. Die Zugangstokens liegen verschlüsselt in der Datenbank. GitLab-Tokens laufen nach zwei Stunden ab, lxnEye erneuert sie automatisch.
 
+## Pull Requests im Blick und automatische Scans
+
+- **Seite „Pull Requests“** (Seitenleiste, Gruppe Aktivität): zeigt jedes Update, das lxnEye in deine Repositories geschrieben hat, mit aktuellem Stand (offen, gemergt, geschlossen), dem Ergebnis der Prüfungen (CI/CD), den geänderten Dateien und einer Zeitleiste. Von dort kannst du den Pull Request öffnen und das Update zurücknehmen.
+- **Änderungen werden von selbst bemerkt:** lxnEye prüft offene Pull Requests regelmäßig (Standard alle 5 Minuten, einstellbar) und hält jede Änderung einmal fest: Prüfungen bestanden oder fehlgeschlagen, neuer Commit im Branch, gemergt, geschlossen. Neue Ereignisse erscheinen als Hinweis, als Zähler an der Seitenleiste und in der Zeitleiste. Wird ein Pull Request gemergt, scannt lxnEye die Quelle sofort neu.
+- **Automatische Scans** (Einstellungen → Automatische Scans): ein- und ausschalten, Intervall von 15 Minuten bis wöchentlich, Anzeige des letzten und nächsten Scans, und „Jetzt alle Quellen scannen“. Die Einstellung bleibt nach einem Neustart erhalten. `SCAN_INTERVAL_MINUTES` ist nur der Startwert (0 = zunächst aus).
+
 ## Builds und Releases (GitHub Actions)
 
 | Workflow | Wann | Was |

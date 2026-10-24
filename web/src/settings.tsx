@@ -1,6 +1,7 @@
+import { useEffect, useState } from 'preact/hooks';
 import { api } from './api';
 import { AccountsPanel } from './accounts';
-import type { Account, Settings, Source } from './types';
+import type { Account, ScheduleStatus, Settings, Source } from './types';
 import { ago, KIND_LABEL } from './util';
 
 const STATUS: Record<Source['status'], { label: string; cls: string }> = {
@@ -15,6 +16,80 @@ function via(s: Source): { text: string; cls: string } {
   if (s.accountName) return { text: `Konto ${s.accountName}`, cls: 'ok' };
   if (s.hasToken) return { text: 'eigener Token', cls: 'neutral' };
   return { text: 'ohne Token (nur öffentlich)', cls: 'neutral' };
+}
+
+function scanLabel(min: number): string {
+  if (min < 60) return `${min} Minuten`;
+  if (min === 60) return '1 Stunde';
+  if (min < 1440) return `${min / 60} Stunden`;
+  return min === 1440 ? 'Täglich' : min === 10080 ? 'Wöchentlich' : `${min / 1440} Tage`;
+}
+const watchLabel = (min: number): string => (min === 1 ? '1 Minute' : min === 60 ? '1 Stunde' : `${min} Minuten`);
+const when = (ts: number | null): string => (ts ? new Date(ts).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '–');
+
+/** Zeitplan: wie oft Quellen automatisch gescannt und offene Pull Requests geprüft werden. */
+function ScheduleSection(props: { onNotify: (m: string) => void; onReload: () => Promise<void> }) {
+  const [st, setSt] = useState<ScheduleStatus | null>(null);
+
+  const load = () => api<ScheduleStatus>('GET', '/api/settings/schedule').then(setSt).catch((e: Error) => props.onNotify(e.message));
+  useEffect(() => {
+    void load();
+    const t = window.setInterval(() => void load(), st?.running ? 3000 : 15000);
+    return () => window.clearInterval(t);
+  }, [st?.running]);
+
+  const save = (patch: Partial<Pick<ScheduleStatus, 'enabled' | 'scanIntervalMin' | 'watchIntervalMin'>>) => {
+    if (!st) return;
+    const next = { enabled: st.enabled, scanIntervalMin: st.scanIntervalMin, watchIntervalMin: st.watchIntervalMin, ...patch };
+    api<ScheduleStatus>('PUT', '/api/settings/schedule', next).then(setSt).catch((e: Error) => props.onNotify(e.message));
+  };
+  const scanNow = () =>
+    api('POST', '/api/scan-all')
+      .then(() => {
+        props.onNotify('Scan aller Quellen gestartet.');
+        void load();
+      })
+      .catch((e: Error) => props.onNotify(e.message));
+
+  if (!st) return <p class="hint">Lade …</p>;
+  return (
+    <>
+      <label class="row-flex" style={{ fontSize: '14px', fontWeight: 600 }}>
+        <input type="checkbox" class="chk" checked={st.enabled} onChange={(e) => save({ enabled: (e.target as HTMLInputElement).checked })} />
+        Quellen automatisch scannen
+      </label>
+      <div class="grid2">
+        <label class="field">
+          Scan-Intervall
+          <select disabled={!st.enabled} value={st.scanIntervalMin} onChange={(e) => save({ scanIntervalMin: Number((e.target as HTMLSelectElement).value) })}>
+            {st.options.scan.map((m) => <option key={m} value={m}>Alle {scanLabel(m)}{m >= 1440 ? '' : ''}</option>)}
+          </select>
+        </label>
+        <label class="field">
+          Offene Pull Requests prüfen
+          <select value={st.watchIntervalMin} onChange={(e) => save({ watchIntervalMin: Number((e.target as HTMLSelectElement).value) })}>
+            {st.options.watch.map((m) => <option key={m} value={m}>Alle {watchLabel(m)}</option>)}
+          </select>
+        </label>
+      </div>
+      <div class="box">
+        <p>
+          <strong>Letzter Scan:</strong>{' '}
+          {st.lastScan ? `${when(st.lastScan.at)} (${st.lastScan.trigger}), ${st.lastScan.sources} Quellen, ${st.lastScan.failed > 0 ? `${st.lastScan.failed} mit Fehler` : 'alle ohne Fehler'}, ${Math.max(1, Math.round(st.lastScan.durationMs / 1000))} s` : 'noch keiner'}
+        </p>
+        <p>
+          <strong>Nächster Scan:</strong> {st.running ? 'läuft gerade …' : st.enabled ? when(st.nextScanAt) : 'ausgeschaltet'}
+        </p>
+        <p>
+          <strong>Pull Requests zuletzt geprüft:</strong> {when(st.lastWatchAt)}
+        </p>
+      </div>
+      <div class="actions">
+        <button class="btn primary" disabled={st.running} onClick={scanNow}>{st.running ? 'Scan läuft …' : 'Jetzt alle Quellen scannen'}</button>
+      </div>
+      <p class="hint">Nach einem Merge scannt lxnEye die betroffene Quelle automatisch neu, damit die neue Version sofort erscheint. Server und Kubernetes melden sich selbst über den Agent.</p>
+    </>
+  );
 }
 
 /** Einstellungsseite: Konten zuerst, danach alle Quellen, KI und Update-Modus. */
@@ -99,6 +174,14 @@ export function SettingsPage(props: {
             <div class="slist">{others.map(row)}</div>
           </div>
         )}
+      </section>
+
+      <section class="card sec" id="scans" aria-labelledby="h-scans">
+        <div>
+          <h2 id="h-scans">Automatische Scans</h2>
+          <p class="hint">lxnEye scannt deine Repositories regelmäßig von selbst und prüft offene Pull Requests auf Änderungen.</p>
+        </div>
+        <ScheduleSection onNotify={props.onNotify} onReload={props.onReload} />
       </section>
 
       <section class="card sec" id="ki" aria-labelledby="h-ki">

@@ -6,6 +6,11 @@ import type { GitApi, RepoRef } from './git/provider.js';
 import { applyPatch, PatchError, type Locator } from './lib/patch.js';
 import type { Cand } from './lib/versions.js';
 
+/** Hält ein Ereignis zu einem Update fest (Zeitleiste auf der Aktivitätsseite). `seen`: schon gesehen, z. B. selbst ausgelöst. */
+export function addEvent(ctx: Ctx, groupId: string, sourceId: string, type: string, detail: string, seen = false): void {
+  ctx.db.prepare('INSERT INTO update_events (group_id, source_id, ts, type, detail, seen) VALUES (?, ?, ?, ?, ?, ?)').run(groupId, sourceId, now(), type, detail, seen ? 1 : 0);
+}
+
 export class UpdateError extends Error {
   constructor(
     message: string,
@@ -64,14 +69,14 @@ export function resolveGroup(ctx: Ctx, item: ItemRow): { src: SourceRow; targets
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
-function record(ctx: Ctx, u: Omit<UpdateRow, 'created_at'>): UpdateRow {
-  const row = { ...u, created_at: now() };
+function record(ctx: Ctx, u: Omit<UpdateRow, 'created_at' | 'head_sha' | 'checks_state' | 'checks_failed' | 'last_checked'>): UpdateRow {
+  const row = { ...u, head_sha: null, checks_state: null, checks_failed: null, last_checked: null, created_at: now() };
   ctx.db
     .prepare(
-      `INSERT INTO updates (id, item_id, target_source_id, kind, parent_id, group_id, mode, file, from_version, to_version, branch, pr_number, pr_url, commit_sha, status, error, actor, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO updates (id, item_id, target_source_id, kind, parent_id, group_id, name, mode, file, from_version, to_version, branch, pr_number, pr_url, commit_sha, status, error, actor, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(row.id, row.item_id, row.target_source_id, row.kind, row.parent_id, row.group_id, row.mode, row.file, row.from_version, row.to_version,
+    .run(row.id, row.item_id, row.target_source_id, row.kind, row.parent_id, row.group_id, row.name, row.mode, row.file, row.from_version, row.to_version,
       row.branch, row.pr_number, row.pr_url, row.commit_sha, row.status, row.error, row.actor, row.created_at);
   return row;
 }
@@ -178,13 +183,14 @@ async function applyChanges(
       const first = c.targets.find((t) => t.file === file) as ItemRow;
       rows.push(
         record(ctx, {
-          ...common, id: randomUUID(), item_id: first.id, file, from_version: c.from, to_version: c.to,
+          ...common, id: randomUUID(), item_id: first.id, name: c.name, file, from_version: c.from, to_version: c.to,
           branch, pr_number: pr?.number ?? null, pr_url: pr?.url ?? null, commit_sha: shaByFile.get(file) ?? null,
           status: mode === 'commit' ? 'committed' : 'open',
         }),
       );
     }
   }
+  addEvent(ctx, groupId, o.src.id, 'opened', mode === 'commit' ? 'Direkt auf den Hauptzweig committet.' : `Pull Request #${pr?.number} erstellt.`, true);
   return rows;
 }
 

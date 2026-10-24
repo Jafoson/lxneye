@@ -1039,3 +1039,50 @@ select.compact {
   background: var(--accent-soft);
   font-weight: 600;
 }
+
+/* Aktivität: Pull Requests */
+.pr {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.timeline li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.timeline li.new span:not(.badge):not(.hint) {
+  font-weight: 600;
+}
+.nav-pill-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+a.btn {
+  color: var(--text);
+}
+a.btn.primary {
+  color: var(--on-accent);
+}
