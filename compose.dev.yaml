@@ -1,0 +1,20 @@
+# Entwicklung: Server (Port 3000, nur im Container) + Oberfläche (http://localhost:5173), SSO aus.
+#   docker compose -f compose.dev.yaml up
+services:
+  dev:
+    image: node:24-bookworm-slim
+    working_dir: /app
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      HOME: /tmp
+      NODE_ENV: development
+      AUTH_DISABLED: "true"
+      HOST: 127.0.0.1
+      DATA_DIR: /app/data
+      SCAN_INTERVAL_MINUTES: "0"
+      AGENT_FILE: /app/agent/lxneye-agent.mjs
+    volumes:
+      - .:/app
+    ports:
+      - "127.0.0.1:5173:5173"
+    command: sh -c "npm run dev:server & npm run dev -w web -- --host 0.0.0.0"

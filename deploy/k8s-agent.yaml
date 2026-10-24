@@ -1,0 +1,50 @@
+# lxnEye-Agent für Kubernetes (liest nur Pods, schreibt nichts).
+# Vorher den Token der Quelle als Secret anlegen:
+#   kubectl -n lxneye create secret generic lxneye-agent --from-literal=token=lxe_...
+apiVersion: v1
+kind: Namespace
+metadata: { name: lxneye }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: lxneye-agent, namespace: lxneye }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: lxneye-agent }
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: lxneye-agent }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: lxneye-agent }
+subjects:
+  - { kind: ServiceAccount, name: lxneye-agent, namespace: lxneye }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: lxneye-agent, namespace: lxneye }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: lxneye-agent } }
+  template:
+    metadata: { labels: { app: lxneye-agent } }
+    spec:
+      serviceAccountName: lxneye-agent
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: agent
+          image: node:24-alpine
+          command: ["sh", "-c", "wget -qO /tmp/agent.mjs \"$LXNEYE_URL/agent.mjs\" && exec node /tmp/agent.mjs"]
+          env:
+            - { name: LXNEYE_URL, value: "https://lxneye.example.com" }
+            - { name: LXNEYE_RUNTIME, value: "kubernetes" }
+            - name: LXNEYE_TOKEN
+              valueFrom: { secretKeyRef: { name: lxneye-agent, key: token } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          resources: { requests: { cpu: 10m, memory: 48Mi }, limits: { memory: 128Mi } }
+      volumes: [{ name: tmp, emptyDir: {} }]

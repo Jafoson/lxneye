@@ -1,0 +1,45 @@
+# lxnEye hinter Caddy (automatisches HTTPS per Let's Encrypt).
+#   cp .env.example .env   # ausfüllen
+#   docker compose up -d
+services:
+  lxneye:
+    # Fertiges Image aus einem Release (ersetzt dein-name durch deinen GitHub-Namen) oder selbst bauen:
+    #   image: ghcr.io/dein-name/lxneye:latest
+    build:
+      context: ..
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      TRUST_PROXY: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16" # Docker-Netz, dem Caddy angehört
+    volumes:
+      - lxneye-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    expose: ["3000"]
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"   # nur für die Weiterleitung auf HTTPS und die Zertifikats-Ausstellung
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-lxneye.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [internal]
+
+networks:
+  internal:
+
+volumes:
+  lxneye-data:
+  caddy-data:
+  caddy-config:

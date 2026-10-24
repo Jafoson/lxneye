@@ -1,0 +1,96 @@
+export type Bump = 'Major' | 'Minor' | 'Patch' | '';
+
+export interface Candidate {
+  level: 'Patch' | 'Minor' | 'Major';
+  version: string;
+  /** Grund, falls eine Renovate-Regel des Repositories dieses Update sperrt */
+  blocked?: string;
+}
+
+export interface Cve {
+  id: string;
+  severity: string;
+  summary: string;
+  fixed: string | null;
+}
+
+export interface Source {
+  id: string;
+  kind: 'git' | 'server' | 'kubernetes';
+  name: string;
+  url: string | null;
+  scanMode: 'standard' | 'offer' | 'ai';
+  status: 'pending' | 'ok' | 'failed' | 'running';
+  scanError: string | null;
+  scannedByAi: boolean;
+  linkedSourceId: string | null;
+  hasToken: boolean;
+  lastScanAt: number | null;
+  meta: Record<string, unknown>;
+  counts: { total: number; outdated: number; cve: number };
+}
+
+export interface UpdateInfo {
+  id: string;
+  status: 'open' | 'merged' | 'closed' | 'committed' | 'reverted' | 'failed';
+  mode: 'pr' | 'commit';
+  kind: 'update' | 'rollback';
+  prNumber: number | null;
+  prUrl: string | null;
+  toVersion: string;
+  createdAt: number;
+}
+
+export interface Item {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  name: string;
+  type: string;
+  ecosystem: 'npm' | 'docker' | 'helm' | 'github' | 'other';
+  file: string | null;
+  current: string;
+  latest: string | null;
+  bump: Bump;
+  /** mögliche Update-Ziele je Stufe (Patch, Minor, Major), das höchste zuletzt */
+  candidates: Candidate[];
+  cves: Cve[];
+  aiFound: boolean;
+  /** Offene Renovate-Pull-Requests für dieses Paket */
+  renovatePrs: { number: number; title: string; url: string }[];
+  /** Server, auf denen es läuft (aus Argo-CD-Apps oder Ordnernamen) */
+  servers: string[];
+  /** Alle Stellen (Dateien), an denen diese Version steht */
+  locations: { id: string; file: string | null; servers: string[] }[];
+  updatable: boolean;
+  updateHint: string | null;
+  update: UpdateInfo | null;
+}
+
+export interface Section {
+  title: string;
+  text: string;
+}
+
+export interface SummaryResponse {
+  auto: {
+    recommendation: { label: string; level: 'danger' | 'warn' | 'ok' };
+    sections: Section[];
+    excerpt: string[];
+    sources: string[];
+  };
+  ai: { sections: Section[]; provider: string } | null;
+  aiConnected: boolean;
+}
+
+export interface Settings {
+  updateMode: 'pr' | 'commit';
+  ai: { connected: boolean; provider?: 'openai' | 'gemini'; model?: string };
+}
+
+export interface SessionInfo {
+  authenticated: boolean;
+  user?: { email: string | null; name: string | null };
+  csrf?: string;
+  devAuth?: boolean;
+}

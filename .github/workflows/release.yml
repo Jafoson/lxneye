@@ -1,0 +1,126 @@
+name: Release
+
+# Ein Release entsteht durch einen Tag wie v0.2.0:
+#   git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Version, Tests, Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Tag und package.json müssen zusammenpassen
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          # Vorabversionen wie 0.2.0-rc.1 dürfen auf 0.2.0 aufbauen
+          base="${tag%%-*}"
+          if [ "$base" != "$pkg" ]; then
+            echo "::error::Der Tag ${GITHUB_REF_NAME} passt nicht zur Version $pkg in package.json. Erhöhe sie zuerst."
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  scan:
+    name: Sicherheitsscan
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: lxneye:scan
+          cache-from: type=gha
+      # Bekannte, behebbare Lücken (hoch/kritisch) im Image stoppen das Release
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: lxneye:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          vuln-type: os,library
+
+  publish:
+    name: Image veröffentlichen und Release erstellen
+    needs: [verify, scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/lxneye
+          # latest und die Kurzformen gibt es nur für stabile Versionen, nicht für -rc usw.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref_name, 'v0.') }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Dateien für das Release zusammenstellen
+        run: |
+          mkdir -p dist-release
+          cp agent/lxneye-agent.mjs dist-release/
+          tar -czf dist-release/lxneye-deploy.tar.gz -C deploy compose.yaml Caddyfile .env.example k8s-agent.yaml
+          (cd dist-release && sha256sum lxneye-agent.mjs lxneye-deploy.tar.gz > SHA256SUMS)
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lxneye"
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "## Installation"
+            echo
+            echo '```bash'
+            echo "docker pull ${image}:${version}"
+            echo '```'
+            echo
+            echo "Image: \`${image}:${version}\` (linux/amd64, linux/arm64), Digest \`${{ steps.build.outputs.digest }}\`"
+            echo
+            echo "Anleitung und Beispielkonfiguration: \`lxneye-deploy.tar.gz\`. Den Agent für Server und Kubernetes gibt es als \`lxneye-agent.mjs\`."
+            echo
+          } > release-body.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-body.md
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist-release/lxneye-agent.mjs
+            dist-release/lxneye-deploy.tar.gz
+            dist-release/SHA256SUMS
