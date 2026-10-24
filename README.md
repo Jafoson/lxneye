@@ -1,5 +1,7 @@
 # lxnEye
 
+[![CI](https://github.com/Jafoson/lxneye/actions/workflows/ci.yml/badge.svg)](https://github.com/Jafoson/lxneye/actions/workflows/ci.yml) [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-blue.svg)](LICENSE)
+
 Selbst gehostete Übersicht über veraltete Abhängigkeiten und Container-Images in deinen Git-Repositories, Servern und Kubernetes-Clustern. Updates per Knopfdruck als Pull Request oder Commit, mit Rollback.
 
 ## Funktionen
@@ -90,3 +92,7 @@ Ohne lokales Node 24: `docker run --rm -v "$PWD":/app -w /app/server node:24-boo
 - Release Notes werden für npm-Pakete und `ghcr.io`-Images gefunden. Bei anderen Images fehlt die Zuordnung zum Quell-Repository.
 - Helm-Chart-Abhängigkeiten (`Chart.yaml`) werden noch nicht geprüft, nur Images in YAML.
 - Kein Mehrbenutzer-Rollenmodell: Wer durch die Zugriffsregel kommt, darf alles.
+
+## Lizenz
+
+[MIT](LICENSE). Du darfst lxnEye frei nutzen, ändern und weitergeben, auch kommerziell, solange der Lizenzhinweis erhalten bleibt. Es gibt keine Gewährleistung.
