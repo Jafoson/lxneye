@@ -174,6 +174,31 @@ describe('Server in Produktion', () => {
     expect(r.json().error).toMatch(/Zielversion/);
   });
 
+  it('verwaltet Schnellnavigation-Links und lehnt gefährliche Adressen ab', async () => {
+    const hdr = { ...H, cookie, 'content-type': 'application/json', 'x-csrf-token': csrf };
+    const post = (payload: object) => app.inject({ method: 'POST', url: '/api/links', headers: hdr, payload });
+    for (const url of ['javascript:alert(1)', 'data:text/html,<script>1</script>', 'file:///etc/passwd', 'ftp://x.de', 'https://user:pw@x.de', 'kein link']) {
+      expect((await post({ title: 'x', url })).statusCode).toBe(400);
+    }
+    expect((await post({ title: 'x', url: 'https://a.de', icon: 'i:gibtsnicht' })).statusCode).toBe(400);
+    expect((await post({ title: 'x', url: 'https://a.de', icon: 'e:<b>' })).statusCode).toBe(400);
+    expect((await post({ title: 'x', url: 'https://a.de', extra: 1 })).statusCode).toBe(400);
+
+    const ok = await post({ title: 'Grafana', url: 'http://192.168.1.5:3000/', icon: 'i:chart' });
+    expect(ok.statusCode).toBe(201);
+    const id = ok.json().link.id;
+    expect((await post({ title: 'Wiki', url: 'https://wiki.example.com', icon: 'e:📘' })).statusCode).toBe(201);
+    const list = (await app.inject({ method: 'GET', url: '/api/links', headers: { ...H, cookie } })).json().links;
+    expect(list.map((l: { title: string }) => l.title)).toEqual(['Grafana', 'Wiki']);
+    const upd = await app.inject({ method: 'PATCH', url: `/api/links/${id}`, headers: hdr, payload: { title: 'Grafana 2', url: 'https://g.example.com', icon: 'i:server' } });
+    expect(upd.json().link).toMatchObject({ title: 'Grafana 2', icon: 'i:server' });
+    expect((await app.inject({ method: 'DELETE', url: `/api/links/${id}`, headers: { ...H, cookie, 'x-csrf-token': csrf } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/links', headers: { ...H, cookie } })).json().links).toHaveLength(1);
+    // ohne Anmeldung und ohne CSRF-Token geht nichts
+    expect((await app.inject({ method: 'GET', url: '/api/links', headers: H })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/api/links', headers: { ...H, cookie, 'content-type': 'application/json' }, payload: { title: 'x', url: 'https://a.de' } })).statusCode).toBe(403);
+  });
+
   it('legt Agent-Quellen an und nimmt nur Berichte mit gültigem Token an', async () => {
     const hdr = { ...H, cookie, 'content-type': 'application/json', 'x-csrf-token': csrf };
     const created = await app.inject({ method: 'POST', url: '/api/sources', headers: hdr, payload: { kind: 'server', name: 'vps-1' } });

@@ -10,6 +10,7 @@ import { deriveKey } from './crypto.js';
 import { openDb, type Db } from './db.js';
 import { agentRoutes } from './routes/agent.js';
 import { apiRoutes } from './routes/api.js';
+import { linkRoutes } from './routes/links.js';
 import { setGithubToken } from './scan/registry.js';
 import { registerSecurity } from './security.js';
 
@@ -61,6 +62,7 @@ export async function buildApp(cfg: Config, opts: { db?: Db } = {}): Promise<Bui
   await app.register(async (scope) => {
     scope.addHook('preHandler', async (req, reply) => auth.requireUser(req, reply));
     await apiRoutes(scope, ctx);
+    await linkRoutes(scope, ctx);
   });
 
   const webDir = cfg.webDir ? resolve(cfg.webDir) : undefined;

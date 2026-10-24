@@ -99,6 +99,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
   action TEXT NOT NULL,
   detail TEXT
 );
+CREATE TABLE IF NOT EXISTS links (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  icon TEXT NOT NULL DEFAULT 'i:link',
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_items_source ON items(source_id);
 CREATE INDEX IF NOT EXISTS idx_updates_item ON updates(item_id);
 `;

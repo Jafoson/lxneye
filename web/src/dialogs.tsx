@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { api } from './api';
-import type { Item, Section, Settings, Source, SummaryResponse } from './types';
+import { ICON_KEYS, iconLabel, LinkIcon } from './icons';
+import type { Item, QuickLink, Section, Settings, Source, SummaryResponse } from './types';
 import { BUMP_EXPLAIN, canRollback, KIND_LABEL, pendingLabel } from './util';
 
 function Modal(props: { label: string; onClose: () => void; top?: boolean; children: ComponentChildren }) {
@@ -942,6 +943,112 @@ export function BatchDialog(props: { items: Item[]; mode: 'pr' | 'commit'; prese
       <div class="actions" style={{ justifyContent: 'flex-end' }}>
         <button class="btn primary" disabled={!canRun} onClick={run}>
           {phase === 'running' ? 'Läuft …' : checking ? 'Prüfe …' : `${okRows.length} ${okRows.length === 1 ? 'Update' : 'Updates'} ausführen`}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------- Schnellnavigation ----------
+
+export function LinkDialog(props: { link: QuickLink | null; onClose: () => void; onSaved: () => void }) {
+  const cur = props.link;
+  const startsEmoji = cur?.icon.startsWith('e:') ?? false;
+  const [title, setTitle] = useState(cur?.title ?? '');
+  const [url, setUrl] = useState(cur?.url ?? '');
+  const [iconKey, setIconKey] = useState(cur && !startsEmoji ? cur.icon.slice(2) : 'link');
+  const [emoji, setEmoji] = useState(startsEmoji ? (cur?.icon.slice(2) ?? '') : '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const icon = emoji.trim() ? `e:${emoji.trim()}` : `i:${iconKey}`;
+  const looksValid = /^https?:\/\/\S+$/i.test(url.trim());
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const body = { title: title.trim(), url: url.trim(), icon };
+      if (cur) await api('PATCH', `/api/links/${cur.id}`, body);
+      else await api('POST', '/api/links', body);
+      props.onSaved();
+      props.onClose();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+  async function remove() {
+    if (!cur) return;
+    setBusy(true);
+    try {
+      await api('DELETE', `/api/links/${cur.id}`);
+      props.onSaved();
+      props.onClose();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal label={cur ? 'Link bearbeiten' : 'Link hinzufügen'} onClose={props.onClose}>
+      <div class="dialog-head">
+        <h2>{cur ? 'Link bearbeiten' : 'Link hinzufügen'}</h2>
+        <button class="btn" onClick={props.onClose}>
+          Abbrechen
+        </button>
+      </div>
+      <div class="grid2">
+        <label class="field">
+          Name
+          <input data-autofocus type="text" value={title} maxLength={40} placeholder="z. B. Grafana" onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
+        </label>
+        <label class="field">
+          Adresse
+          <input type="url" value={url} placeholder="https://grafana.example.com" onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
+        </label>
+      </div>
+      {url && !looksValid && <p class="hint" style={{ color: 'var(--warn-text)' }}>Die Adresse muss mit http:// oder https:// beginnen.</p>}
+
+      <fieldset class="icon-picker">
+        <legend>Symbol</legend>
+        <div class="icon-grid" role="radiogroup" aria-label="Symbol wählen">
+          {ICON_KEYS.map((k) => (
+            <button key={k} role="radio" aria-checked={!emoji.trim() && iconKey === k} aria-label={iconLabel(k)} title={iconLabel(k)} class="icon-btn" onClick={() => { setIconKey(k); setEmoji(''); }}>
+              <LinkIcon icon={`i:${k}`} size={20} />
+            </button>
+          ))}
+        </div>
+        <label class="field" style={{ maxWidth: '260px' }}>
+          Oder ein eigenes Zeichen (z. B. Emoji)
+          <input type="text" value={emoji} maxLength={8} placeholder="📘" onInput={(e) => setEmoji((e.target as HTMLInputElement).value)} />
+        </label>
+      </fieldset>
+
+      <div class="row-flex">
+        <span class="hint">Vorschau:</span>
+        <span class="quick-preview">
+          <LinkIcon icon={icon} /> {title.trim() || 'Name'}
+        </span>
+      </div>
+      {error && <p class="box danger">{error}</p>}
+      <div class="actions" style={{ justifyContent: 'space-between' }}>
+        <div class="actions">
+          {cur && !confirmDelete && (
+            <button class="btn danger" onClick={() => setConfirmDelete(true)}>
+              Löschen
+            </button>
+          )}
+          {cur && confirmDelete && (
+            <button class="btn danger" disabled={busy} onClick={remove}>
+              Wirklich löschen
+            </button>
+          )}
+        </div>
+        <button class="btn primary" disabled={busy || !title.trim() || !looksValid} onClick={save}>
+          Speichern
         </button>
       </div>
     </Modal>

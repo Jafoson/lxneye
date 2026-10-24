@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, setCsrf } from './api';
-import { AddSourceDialog, AiDialog, BatchDialog, ConfirmDialog, DeleteSourceDialog, DetailDialog, EditSourceDialog } from './dialogs';
-import type { Candidate, Item, SessionInfo, Settings, Source } from './types';
+import { AddSourceDialog, AiDialog, BatchDialog, ConfirmDialog, DeleteSourceDialog, DetailDialog, EditSourceDialog, LinkDialog } from './dialogs';
+import { LinkIcon } from './icons';
+import type { Candidate, Item, QuickLink, SessionInfo, Settings, Source } from './types';
 import { ago, BUMP_TIP, canRollback, KIND_LABEL, pendingLabel, sevRank } from './util';
 
 type StatusFilter = 'all' | 'outdated' | 'cve' | 'current';
@@ -22,6 +23,8 @@ const EyeIcon = () => (
 export function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
+  const [links, setLinks] = useState<QuickLink[]>([]);
+  const [linkDialog, setLinkDialog] = useState<{ link: QuickLink | null } | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [settings, setSettings] = useState<Settings>({ updateMode: 'pr', ai: { connected: false } });
   const [tab, setTab] = useState('all');
@@ -56,11 +59,13 @@ export function App() {
 
   const load = useCallback(async () => {
     try {
-      const [s, i, st] = await Promise.all([
+      const [s, i, st, l] = await Promise.all([
         api<{ sources: Source[] }>('GET', '/api/sources'),
         api<{ items: Item[] }>('GET', '/api/items'),
         api<Settings>('GET', '/api/settings'),
+        api<{ links: QuickLink[] }>('GET', '/api/links'),
       ]);
+      setLinks(l.links);
       setSources(s.sources);
       setItems(i.items);
       setSettings(st);
@@ -241,6 +246,7 @@ export function App() {
       </header>
 
       <div class="page">
+        <div class="side">
         <nav class="nav" aria-label="Quellen">
           <div class="nav-title">Quellen</div>
           <button class="nav-item" aria-current={tab === 'all'} onClick={() => { setTab('all'); setQuery(''); setStatus('all'); }}>
@@ -266,6 +272,28 @@ export function App() {
             </button>
           ))}
         </nav>
+
+        <nav class="nav" aria-label="Schnellnavigation">
+          <div class="nav-head">
+            <div class="nav-title">Schnellnavigation</div>
+            <button class="icon-only" aria-label="Link hinzufügen" title="Link hinzufügen" onClick={() => setLinkDialog({ link: null })}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+          </div>
+          {links.length === 0 && <p class="hint" style={{ padding: '0 12px' }}>Hier kannst du Links zu deinen Diensten ablegen, zum Beispiel Grafana oder Argo CD.</p>}
+          {links.map((l) => (
+            <div class="quick-row" key={l.id}>
+              <a class="quick-link" href={l.url} target="_blank" rel="noopener noreferrer" title={`${l.url} (öffnet in neuem Tab)`}>
+                <LinkIcon icon={l.icon} />
+                <span class="qt">{l.title}</span>
+              </a>
+              <button class="icon-only" aria-label={`${l.title} bearbeiten`} title="Bearbeiten" onClick={() => setLinkDialog({ link: l })}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13 7l4 4" /></svg>
+              </button>
+            </div>
+          ))}
+        </nav>
+        </div>
 
         <main class="main">
           {cur && <Banner source={cur} aiConnected={settings.ai.connected} onOpenAi={() => setShowAi(true)} reload={load} notify={notify} />}
@@ -409,6 +437,7 @@ export function App() {
           onOpenAi={() => setShowAi(true)}
         />
       )}
+      {linkDialog && <LinkDialog link={linkDialog.link} onClose={() => setLinkDialog(null)} onSaved={load} />}
       {editing && <EditSourceDialog source={editing} sources={sources} onClose={() => setEditing(null)} onSaved={load} />}
       {deleting && <DeleteSourceDialog source={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setTab('all'); void load(); }} />}
       {showBatch && (
