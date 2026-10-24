@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 
-/** Eingebaute Symbole für die Schnellnavigation. Es werden keine Bilder von fremden Seiten geladen. */
+/** Eingebaute Symbole für die Schnellnavigation. Es werden keine Logos oder Bilder von fremden Seiten geladen. */
 const P: Record<string, ComponentChildren> = {
   link: (<><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>),
   globe: (<><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15 15 0 0 1 0 20a15 15 0 0 1 0-20" /></>),
@@ -37,19 +37,12 @@ const LABEL: Record<string, string> = {
 };
 export const iconLabel = (key: string): string => LABEL[key] ?? key;
 
-/** `i:<name>` = eingebautes Symbol, `e:<zeichen>` = Emoji oder Zeichen */
+/** `i:<name>` = eingebautes Symbol im selben Stil wie die übrigen Symbole der Oberfläche (Linie, currentColor). */
 export function LinkIcon(props: { icon: string; size?: number }) {
   const size = props.size ?? 18;
-  if (props.icon.startsWith('e:')) {
-    return (
-      <span aria-hidden="true" style={{ width: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.95, lineHeight: 1 }}>
-        {props.icon.slice(2)}
-      </span>
-    );
-  }
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      {P[props.icon.slice(2)] ?? P.link}
+      {P[props.icon.replace(/^i:/, '')] ?? P.link}
     </svg>
   );
 }

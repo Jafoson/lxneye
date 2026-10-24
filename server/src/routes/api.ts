@@ -5,12 +5,14 @@ import { AiKeyError, aiSettingsSchema, clearAi, DEFAULT_MODEL, listModels, loadA
 import type { Ctx, ItemRow, SourceRow, UpdateRow } from '../ctx.js';
 import { encrypt, randomToken, sha256Hex } from '../crypto.js';
 import { audit, now, setSetting } from '../db.js';
-import { InputError, parseGithubUrl } from '../git/github.js';
+import { parseRepoUrl, providerOf } from '../git/open.js';
+import { InputError } from '../git/provider.js';
 import { prMatches, renovateBlock, type RenovateConfig, type RenovatePr } from '../git/renovate.js';
 import type { Cve } from '../scan/osv.js';
 import { getSource, scanSource } from '../scan/run.js';
 import { aiSummary, buildAutoSummary } from '../summary.js';
-import { checkBatch, rollbackUpdate, runBatch, startUpdate, UpdateError, updateMode } from '../updates.js';
+import { aggregateChecks } from '../git/checks.js';
+import { checkBatch, client, rollbackUpdate, runBatch, startUpdate, UpdateError, updateMode } from '../updates.js';
 
 const nameSchema = z.string().trim().min(1).max(80).regex(/^[\p{L}\p{N} ._/@:-]+$/u, 'Erlaubt sind Buchstaben, Zahlen und . _ - / @ :');
 
@@ -40,7 +42,7 @@ function counts(ctx: Ctx, sourceId: string): { total: number; outdated: number; 
   return {
     total: rows.length,
     outdated: rows.filter((r) => r.bump !== '').length,
-    cve: rows.filter((r) => r.bump !== '' && r.cves !== '[]').length,
+    cve: rows.filter((r) => r.cves !== '[]').length,
   };
 }
 
@@ -55,6 +57,9 @@ function sourceDto(ctx: Ctx, s: SourceRow) {
     scanError: s.scan_error,
     scannedByAi: !!s.scanned_by_ai,
     linkedSourceId: s.linked_source_id,
+    provider: providerOf(ctx.cfg, s),
+    accountId: s.account_id,
+    accountName: s.account_id ? ((ctx.db.prepare('SELECT login, provider FROM accounts WHERE id = ?').get(s.account_id) as { login: string; provider: string } | undefined)?.login ?? null) : null,
     hasToken: !!s.credential_enc,
     lastScanAt: s.last_scan_at,
     meta: JSON.parse(s.meta) as Record<string, unknown>,
@@ -96,12 +101,13 @@ function groupDto(ctx: Ctx, members: ItemRow[], src: SourceRow, upd: UpdateRow |
     ecosystem: rep.ecosystem,
     current: rep.current,
     latest: rep.latest,
+    note: rep.note,
     bump: rep.bump,
     candidates: candidatesOf(rep).map((c) => {
       const blocked = renovateBlock(renovate, rep.name, c.level as 'Patch' | 'Minor' | 'Major');
       return blocked ? { ...c, blocked } : c;
     }),
-    renovatePrs: (renovateMeta?.prs ?? []).filter((p) => prMatches(p, rep.name)).map((p) => ({ number: p.number, title: p.title, url: p.url })),
+    renovatePrs: (renovateMeta?.prs ?? []).filter((p) => prMatches(p, rep.name)).map((p) => ({ number: p.number, title: p.title, url: p.url, sourceId: ruleSrc?.id ?? null })),
     cves: [...cves.values()],
     aiFound: members.some((m) => !!m.ai_found),
     servers,
@@ -109,7 +115,7 @@ function groupDto(ctx: Ctx, members: ItemRow[], src: SourceRow, upd: UpdateRow |
     updatable,
     updateHint: hint,
     update: upd
-      ? { id: upd.id, status: upd.status, mode: upd.mode, kind: upd.kind, prNumber: upd.pr_number, prUrl: upd.pr_url, toVersion: upd.to_version, createdAt: upd.created_at }
+      ? { id: upd.id, status: upd.status, mode: upd.mode, kind: upd.kind, sourceId: upd.target_source_id, prNumber: upd.pr_number, prUrl: upd.pr_url, toVersion: upd.to_version, createdAt: upd.created_at }
       : null,
   };
 }
@@ -136,10 +142,12 @@ export async function apiRoutes(app: FastifyInstance, ctx: Ctx): Promise<void> {
     try {
       const b = createSource.parse(req.body);
       let url: string | null = null;
+      let provider: string | null = null;
       if (b.kind === 'git') {
         if (!b.url) return reply.code(400).send({ error: 'Für ein Git-Repository wird die URL benötigt.' });
-        const r = parseGithubUrl(b.url);
-        url = `https://github.com/${r.owner}/${r.repo}`;
+        const r = parseRepoUrl(ctx.cfg, b.url);
+        url = r.url;
+        provider = r.provider;
       } else if (b.url) {
         url = b.url.slice(0, 200);
       }
@@ -151,10 +159,10 @@ export async function apiRoutes(app: FastifyInstance, ctx: Ctx): Promise<void> {
       const agentToken = b.kind === 'git' ? null : `lxe_${randomToken(32)}`;
       try {
         db.prepare(
-          `INSERT INTO sources (id, kind, name, url, scan_mode, credential_enc, agent_token_hash, linked_source_id, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO sources (id, kind, name, url, provider, scan_mode, credential_enc, agent_token_hash, linked_source_id, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
-          id, b.kind, b.name, url, b.scanMode, b.token ? encrypt(ctx.key, b.token) : null,
+          id, b.kind, b.name, url, provider, b.scanMode, b.token ? encrypt(ctx.key, b.token) : null,
           agentToken ? sha256Hex(agentToken) : null, b.linkedSourceId ?? null, 'pending', now(),
         );
       } catch (err) {
@@ -186,8 +194,8 @@ export async function apiRoutes(app: FastifyInstance, ctx: Ctx): Promise<void> {
       let rescan = false;
       if (b.url !== undefined && b.url !== s.url) {
         if (s.kind !== 'git') return reply.code(400).send({ error: 'Nur Git-Repositories haben eine URL.' });
-        const r = parseGithubUrl(b.url);
-        db.prepare("UPDATE sources SET url = ?, status = 'pending', scan_error = NULL WHERE id = ?").run(`https://github.com/${r.owner}/${r.repo}`, id);
+        const r = parseRepoUrl(ctx.cfg, b.url);
+        db.prepare("UPDATE sources SET url = ?, provider = ?, status = 'pending', scan_error = NULL WHERE id = ?").run(r.url, r.provider, id);
         rescan = true;
       }
       if (b.scanMode) db.prepare('UPDATE sources SET scan_mode = ? WHERE id = ?').run(b.scanMode, id);
@@ -365,6 +373,69 @@ export async function apiRoutes(app: FastifyInstance, ctx: Ctx): Promise<void> {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
       const u = await rollbackUpdate(ctx, id, actor(req));
       return { ok: true, rollback: u ? { status: u.status, mode: u.mode, prUrl: u.pr_url } : null };
+    } catch (err) {
+      return handleError(err, reply);
+    }
+  });
+
+  // --- Prüfläufe (CI) der Pull Requests ---
+  interface PrLive {
+    state: 'open' | 'merged' | 'closed';
+    checks: 'success' | 'failure' | 'pending' | 'none' | 'unknown';
+    total: number;
+    failed: string[];
+    running: number;
+  }
+  const prCache = new Map<string, { at: number; value: PrLive }>();
+  const PR_TTL = 40_000;
+
+  /** Pull Requests, nach denen gefragt werden darf: unsere eigenen und die offenen von Renovate. */
+  const knownPrs = (): Set<string> => {
+    const set = new Set<string>();
+    for (const u of db.prepare('SELECT target_source_id AS s, pr_number AS n FROM updates WHERE pr_number IS NOT NULL').all() as { s: string; n: number }[]) set.add(`${u.s}:${u.n}`);
+    for (const src of db.prepare("SELECT id, meta FROM sources WHERE kind = 'git'").all() as { id: string; meta: string }[]) {
+      const r = (JSON.parse(src.meta) as { renovate?: { prs?: { number: number }[] } }).renovate;
+      for (const p of r?.prs ?? []) set.add(`${src.id}:${p.number}`);
+    }
+    return set;
+  };
+
+  app.get('/api/prs/status', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    try {
+      const { keys } = z.object({ keys: z.string().max(3000) }).parse(req.query);
+      const wanted = [...new Set(keys.split(',').filter(Boolean))].slice(0, 40);
+      const allowed = knownPrs();
+      const out: Record<string, PrLive> = {};
+      for (const key of wanted) {
+        const m = /^([0-9a-f-]{36}):(\d{1,7})$/.exec(key);
+        if (!m || !allowed.has(key)) continue;
+        const hit = prCache.get(key);
+        if (hit && Date.now() - hit.at < PR_TTL) {
+          out[key] = hit.value;
+          continue;
+        }
+        const src = getSource(ctx, m[1] as string);
+        if (!src || src.kind !== 'git') continue;
+        let value: PrLive;
+        try {
+          const { gh, repo } = await client(ctx, src);
+          const n = Number(m[2]);
+          const head = await gh.prHead(repo, n);
+          const state = head.merged ? 'merged' : head.state === 'closed' ? 'closed' : 'open';
+          if (state !== 'open') {
+            // Status gleich in der Datenbank nachziehen, ohne auf den nächsten Scan zu warten
+            db.prepare("UPDATE updates SET status = ? WHERE target_source_id = ? AND pr_number = ? AND status = 'open'").run(state, src.id, n);
+          }
+          const c = await gh.checks(repo, head.sha);
+          const agg = aggregateChecks(c.runs, c.statuses);
+          value = { state, checks: c.restricted && agg.total === 0 ? 'unknown' : agg.state, total: agg.total, failed: agg.failed, running: agg.running };
+        } catch {
+          value = { state: 'open', checks: 'unknown', total: 0, failed: [], running: 0 };
+        }
+        prCache.set(key, { at: Date.now(), value });
+        out[key] = value;
+      }
+      return { statuses: out };
     } catch (err) {
       return handleError(err, reply);
     }

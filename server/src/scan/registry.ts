@@ -43,8 +43,11 @@ export function semverCandidates(current: string, versions: string[]): Cand[] {
 
 export async function latestNpm(name: string, current: string): Promise<Latest> {
   const enc = name.startsWith('@') ? `@${encodeURIComponent(name.slice(1))}` : encodeURIComponent(name);
+  // Pakete mit sehr vielen Versionen (z. B. next, typescript) haben mehrere MB große Dokumente
   const meta = await fetchJson<{ 'dist-tags'?: { latest?: string }; versions?: Record<string, unknown> }>(`https://registry.npmjs.org/${enc}`, {
     headers: { accept: 'application/vnd.npm.install-v1+json' },
+    maxBytes: 64 * 1024 * 1024,
+    timeoutMs: 45_000,
   });
   const versions = Object.keys(meta.versions ?? {});
   if (versions.length === 0 && meta['dist-tags']?.latest) versions.push(meta['dist-tags'].latest);

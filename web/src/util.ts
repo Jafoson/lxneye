@@ -41,4 +41,19 @@ export function pendingLabel(it: Item): string | null {
 export const canRollback = (it: Item): boolean =>
   !!it.update && it.update.kind === 'update' && ['open', 'merged', 'committed'].includes(it.update.status) && it.bump !== '';
 
-export const sevRank = (it: Item): number => (it.bump === '' ? 0 : it.cves.length > 0 ? 3 : pendingLabel(it) ? 1 : 2);
+export const sevRank = (it: Item): number => (it.cves.length > 0 ? 3 : it.bump === '' ? 0 : pendingLabel(it) ? 1 : 2);
+
+/** Vergleicht dotted Versionen wie 16.4.1 oder v1.2 (nur die Zahlen). */
+export function cmpVer(a: string, b: string): number {
+  const nums = (v: string) => (v.match(/\d+/g) ?? []).map(Number);
+  const x = nums(a);
+  const y = nums(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** Behebt dieses Ziel alle bekannten Sicherheitslücken des Eintrags? */
+export const fixesCves = (it: Item, version: string): boolean => it.cves.length > 0 && it.cves.every((c) => !!c.fixed && cmpVer(version, c.fixed) >= 0);

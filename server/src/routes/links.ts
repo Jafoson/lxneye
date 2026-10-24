@@ -27,7 +27,7 @@ export function parseLinkUrl(raw: string): string {
 const iconSchema = z
   .string()
   .max(20)
-  .refine((v) => (v.startsWith('i:') ? (LINK_ICONS as readonly string[]).includes(v.slice(2)) : /^e:[^\p{C}<>&"']{1,8}$/u.test(v)), 'Ungültiges Symbol')
+  .refine((v) => v.startsWith('i:') && (LINK_ICONS as readonly string[]).includes(v.slice(2)), 'Ungültiges Symbol')
   .default('i:link');
 
 const body = z

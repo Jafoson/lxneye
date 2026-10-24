@@ -20,6 +20,10 @@ export interface SourceRow {
   status: 'pending' | 'ok' | 'failed' | 'running';
   scan_error: string | null;
   scanned_by_ai: number;
+  /** 'github' | 'gitlab' (leer = aus der URL ableiten) */
+  provider: string | null;
+  /** verbundenes Konto, dessen Zugang genutzt wird */
+  account_id: string | null;
   meta: string;
   last_scan_at: number | null;
   created_at: number;
@@ -44,6 +48,8 @@ export interface ItemRow {
   candidates: string;
   /** kommagetrennt: Server, auf dem die Stelle ausgerollt wird (aus Argo-CD-Apps / Pfad) */
   server: string | null;
+  /** Warum die neueste Version nicht ermittelt werden konnte */
+  note: string | null;
   updated_at: number;
 }
 
@@ -65,5 +71,19 @@ export interface UpdateRow {
   status: 'open' | 'merged' | 'closed' | 'committed' | 'reverted' | 'failed';
   error: string | null;
   actor: string | null;
+  created_at: number;
+}
+
+export interface AccountRow {
+  id: string;
+  provider: 'github' | 'gitlab';
+  host: string;
+  login: string;
+  display_name: string | null;
+  token_enc: string;
+  refresh_enc: string | null;
+  expires_at: number | null;
+  scope: string | null;
+  via: 'device' | 'token';
   created_at: number;
 }

@@ -6,6 +6,8 @@
 
 const BASE_HOSTS = [
   'api.github.com',
+  'github.com',
+  'gitlab.com',
   'artifacthub.io',
   'registry.npmjs.org',
   'api.osv.dev',

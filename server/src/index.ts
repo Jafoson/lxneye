@@ -14,7 +14,7 @@ try {
   throw err;
 }
 
-configureHttp({ extraHosts: cfg.extraHosts });
+configureHttp({ extraHosts: [...cfg.extraHosts, cfg.gitlabUrl.hostname] });
 const { app, ctx, warmAuth } = await buildApp(cfg);
 
 if (cfg.devAuth) app.log.warn('AUTH_DISABLED: Die Anmeldung ist ausgeschaltet. Nur für lokale Entwicklung, der Server lauscht nur auf localhost.');

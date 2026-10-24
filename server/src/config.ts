@@ -34,6 +34,9 @@ const schema = z.object({
   GITHUB_TOKEN: z.string().optional(),
   EXTRA_REGISTRY_HOSTS: z.string().optional(),
   WEB_DIR: z.string().optional(),
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITLAB_CLIENT_ID: z.string().optional(),
+  GITLAB_URL: z.string().default('https://gitlab.com'),
   AUTH_DISABLED: z.string().optional(),
 });
 
@@ -64,6 +67,11 @@ export interface Config {
   githubToken: string | undefined;
   extraHosts: string[];
   webDir: string | undefined;
+  /** OAuth-Anwendung für die Anmeldung bei GitHub/GitLab (Device-Flow, kein Secret nötig). Ohne ID geht nur Token. */
+  githubClientId: string | undefined;
+  gitlabClientId: string | undefined;
+  /** Basis-Adresse der GitLab-Instanz (Standard gitlab.com, auch selbst gehostet möglich) */
+  gitlabUrl: URL;
   /** Nur Entwicklung: Anmeldung ist aus, jede Anfrage gilt als angemeldeter Entwickler. */
   devAuth: boolean;
 }
@@ -112,6 +120,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     problems.push(
       'In Produktion braucht lxnEye entweder eigenes TLS (TLS_CERT_FILE/TLS_KEY_FILE) oder einen vertrauenswürdigen Reverse-Proxy (TRUST_PROXY=true oder IP/CIDR des Proxys).',
     );
+  }
+
+  let gitlabUrl = new URL('https://gitlab.com');
+  try {
+    gitlabUrl = new URL(e.GITLAB_URL);
+    if (gitlabUrl.protocol !== 'https:' && isProd) problems.push('GITLAB_URL muss in Produktion https:// verwenden.');
+    if (gitlabUrl.pathname !== '/' || gitlabUrl.username) problems.push('GITLAB_URL darf keinen Pfad und keine Zugangsdaten enthalten (z. B. https://gitlab.example.com).');
+  } catch {
+    problems.push('GITLAB_URL ist keine gültige URL.');
   }
 
   const secretKey = e.SECRET_KEY ?? '';
@@ -165,6 +182,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     githubToken: e.GITHUB_TOKEN || undefined,
     extraHosts: list(e.EXTRA_REGISTRY_HOSTS).map((h) => h.toLowerCase()),
     webDir: e.WEB_DIR,
+    githubClientId: e.GITHUB_CLIENT_ID || undefined,
+    gitlabClientId: e.GITLAB_CLIENT_ID || undefined,
+    gitlabUrl: new URL(gitlabUrl.origin),
     devAuth,
   };
 }

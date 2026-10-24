@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, setCsrf } from './api';
 import { AddSourceDialog, AiDialog, BatchDialog, ConfirmDialog, DeleteSourceDialog, DetailDialog, EditSourceDialog, LinkDialog } from './dialogs';
+import { RepoPickerDialog } from './accounts';
+import { ChecksBadge } from './checks';
 import { LinkIcon } from './icons';
-import type { Candidate, Item, QuickLink, SessionInfo, Settings, Source } from './types';
-import { ago, BUMP_TIP, canRollback, KIND_LABEL, pendingLabel, sevRank } from './util';
+import { SettingsPage } from './settings';
+import type { Account, Candidate, Item, PrStatus, QuickLink, SessionInfo, Settings, Source } from './types';
+import { ago, BUMP_TIP, canRollback, fixesCves, KIND_LABEL, pendingLabel, sevRank } from './util';
 
 type StatusFilter = 'all' | 'outdated' | 'cve' | 'current';
 const FILTERS: { id: StatusFilter; label: string }[] = [
@@ -24,6 +27,7 @@ export function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [links, setLinks] = useState<QuickLink[]>([]);
+  const [prLive, setPrLive] = useState<Record<string, PrStatus>>({});
   const [linkDialog, setLinkDialog] = useState<{ link: QuickLink | null } | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [settings, setSettings] = useState<Settings>({ updateMode: 'pr', ai: { connected: false } });
@@ -33,6 +37,8 @@ export function App() {
   const [serverFilter, setServerFilter] = useState('');
   const [detail, setDetail] = useState<{ id: string; mode: 'badge' | 'item' } | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [pickAccount, setPickAccount] = useState<Account | null>(null);
+  const [hash, setHash] = useState(window.location.hash);
   const [showAi, setShowAi] = useState(false);
   const [editing, setEditing] = useState<Source | null>(null);
   const [deleting, setDeleting] = useState<Source | null>(null);
@@ -42,6 +48,24 @@ export function App() {
   const [confirm, setConfirm] = useState<{ it: Item; to?: string; reasons: string[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+
+  // Zwei Ansichten: Übersicht (#/) und Einstellungen (#/einstellungen[/abschnitt]). Der Zurück-Knopf des Browsers funktioniert.
+  useEffect(() => {
+    const on = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  const view = hash.startsWith('#/einstellungen') ? 'settings' : 'dashboard';
+  const go = (to: string) => {
+    window.location.hash = to;
+  };
+  useEffect(() => {
+    if (view !== 'settings') return;
+    const section = hash.split('/')[2];
+    const el = section ? document.getElementById(section) : null;
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else window.scrollTo(0, 0);
+  }, [hash, view]);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -82,6 +106,39 @@ export function App() {
     const t = window.setInterval(() => void load(), scanning ? 5000 : 60000);
     return () => window.clearInterval(t);
   }, [authed, scanning, load]);
+
+  // Prüfläufe (CI/CD) der Pull Requests: unsere eigenen und die von Renovate
+  const prKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const i of items) {
+      if (i.update?.prNumber && i.update.status === 'open' && i.bump !== '') keys.add(`${i.update.sourceId}:${i.update.prNumber}`);
+      for (const p of i.renovatePrs) if (p.sourceId) keys.add(`${p.sourceId}:${p.number}`);
+    }
+    return [...keys].sort().join(',');
+  }, [items]);
+  useEffect(() => {
+    if (!authed || !prKeys) return;
+    let alive = true;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const r = await api<{ statuses: Record<string, PrStatus> }>('GET', `/api/prs/status?keys=${encodeURIComponent(prKeys)}`);
+        if (!alive) return;
+        setPrLive(r.statuses);
+        // Wurde ein PR inzwischen gemergt oder geschlossen, hat der Server das schon vermerkt: Liste neu laden
+        if (Object.values(r.statuses).some((s) => s.state !== 'open')) void load();
+        const wait = Object.values(r.statuses).some((s) => s.checks === 'pending') ? 20_000 : 90_000;
+        timer = window.setTimeout(tick, wait);
+      } catch {
+        if (alive) timer = window.setTimeout(tick, 120_000);
+      }
+    };
+    void tick();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [authed, prKeys, load]);
 
   const run = async (id: string, fn: () => Promise<unknown>, okMsg?: string) => {
     setBusyIds((b) => new Set(b).add(id));
@@ -141,7 +198,8 @@ export function App() {
   }, [serverFilter, serverNames]);
   const scopeItems = useMemo(() => (serverFilter ? inSource.filter((i) => i.servers.includes(serverFilter)) : inSource), [inSource, serverFilter]);
   const outdated = scopeItems.filter((i) => i.bump !== '').length;
-  const withCve = scopeItems.filter((i) => i.bump !== '' && i.cves.length > 0).length;
+  const withCve = scopeItems.filter((i) => i.cves.length > 0).length;
+  const unknownCount = scopeItems.filter((i) => i.latest === null && i.bump === '').length;
   const pendingCount = scopeItems.filter((i) => pendingLabel(i)).length;
 
   const rows = useMemo(() => {
@@ -149,7 +207,7 @@ export function App() {
     return scopeItems
       .filter((i) => {
         const open = i.bump !== '';
-        const ok = status === 'all' ? true : status === 'outdated' ? open : status === 'cve' ? open && i.cves.length > 0 : !open;
+        const ok = status === 'all' ? true : status === 'outdated' ? open : status === 'cve' ? i.cves.length > 0 : !open;
         return ok && (!q || `${i.name} ${i.type} ${i.sourceName}`.toLowerCase().includes(q));
       })
       .sort((a, b) => sevRank(b) - sevRank(a) || a.name.localeCompare(b.name));
@@ -212,13 +270,11 @@ export function App() {
     <>
       <header class="header">
         <div class="header-inner">
-          <div class="brand">
+          <button class="brand-link" onClick={() => go('#/')} aria-label="Zur Übersicht">
             <EyeIcon /> lxnEye
-          </div>
+          </button>
+          <div style={{ flexGrow: 1 }} />
           <div class="toolbar">
-            <button class="btn" onClick={() => setShowAi(true)}>
-              {settings.ai.connected ? `KI verbunden (${settings.ai.provider === 'gemini' ? 'Gemini' : 'OpenAI'})` : 'KI verbinden'}
-            </button>
             <span class="hint">Update-Modus</span>
             <div class="seg" role="group" aria-label="Update-Modus">
               {(['pr', 'commit'] as const).map((m) => (
@@ -231,9 +287,6 @@ export function App() {
                 </button>
               ))}
             </div>
-            <button class="btn primary" onClick={() => setShowAdd(true)}>
-              + Quelle hinzufügen
-            </button>
             {session.devAuth ? (
               <span class="badge warn tip" data-tip="Entwicklungsmodus: Die Anmeldung ist ausgeschaltet.">Dev ohne SSO</span>
             ) : (
@@ -248,8 +301,13 @@ export function App() {
       <div class="page">
         <div class="side">
         <nav class="nav" aria-label="Quellen">
-          <div class="nav-title">Quellen</div>
-          <button class="nav-item" aria-current={tab === 'all'} onClick={() => { setTab('all'); setQuery(''); setStatus('all'); }}>
+          <div class="nav-head">
+            <div class="nav-title">Quellen</div>
+            <button class="icon-only" aria-label="Quelle hinzufügen" title="Quelle hinzufügen" onClick={() => setShowAdd(true)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+          </div>
+          <button class="nav-item" aria-current={view === 'dashboard' && tab === 'all'} onClick={() => { setTab('all'); setQuery(''); setStatus('all'); go('#/'); }}>
             <span class="nav-text">
               <span class="nav-name">Übersicht</span>
               <span class="nav-sub">{sources.length} Quellen</span>
@@ -257,7 +315,7 @@ export function App() {
             {items.filter((i) => i.bump !== '').length > 0 && <span class="pill">{items.filter((i) => i.bump !== '').length}</span>}
           </button>
           {sources.map((s) => (
-            <button key={s.id} class="nav-item" aria-current={tab === s.id} onClick={() => { setTab(s.id); setQuery(''); setStatus('all'); }}>
+            <button key={s.id} class="nav-item" aria-current={view === 'dashboard' && tab === s.id} onClick={() => { setTab(s.id); setQuery(''); setStatus('all'); go('#/'); }}>
               <span class="nav-text">
                 <span class="nav-name">{s.name}</span>
                 <span class="nav-sub">{KIND_LABEL[s.kind]}</span>
@@ -293,8 +351,45 @@ export function App() {
             </div>
           ))}
         </nav>
+
+        <nav class="nav" aria-label="Einstellungen">
+          <div class="nav-title">Verwaltung</div>
+          <button class="nav-item" aria-current={view === 'settings'} onClick={() => go('#/einstellungen')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style={{ flex: '0 0 auto' }}>
+              <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" />
+            </svg>
+            <span class="nav-text">
+              <span class="nav-name">Einstellungen</span>
+              <span class="nav-sub">Konten, Quellen, KI, Updates</span>
+            </span>
+          </button>
+          {view === 'settings' && (
+            <div class="subnav">
+              {[['konten', 'Konten'], ['quellen', 'Quellen'], ['ki', 'KI'], ['updates', 'Updates']].map(([id, label]) => (
+                <a key={id} href={`#/einstellungen/${id}`} aria-current={hash.split('/')[2] === id}>
+                  {label}
+                </a>
+              ))}
+            </div>
+          )}
+        </nav>
         </div>
 
+        {view === 'settings' ? (
+          <div class="main">
+            <SettingsPage
+              sources={sources}
+              settings={settings}
+              onReload={load}
+              onNotify={notify}
+              onPick={setPickAccount}
+              onAddSource={() => setShowAdd(true)}
+              onEditSource={setEditing}
+              onDeleteSource={setDeleting}
+              onOpenAi={() => setShowAi(true)}
+            />
+          </div>
+        ) : (
         <main class="main">
           {cur && <Banner source={cur} aiConnected={settings.ai.connected} onOpenAi={() => setShowAi(true)} reload={load} notify={notify} />}
           {!cur && failed.length > 0 && (
@@ -336,10 +431,10 @@ export function App() {
           </div>
 
           <section class="stats" aria-label="Zusammenfassung">
-            <Stat label="Einträge gesamt" value={scopeItems.length} sub="Veraltet + aktuell" />
+            <Stat label="Einträge gesamt" value={scopeItems.length} sub={unknownCount > 0 ? `davon ${unknownCount} nicht prüfbar` : 'Veraltet + aktuell'} />
             <Stat label="Veraltet" value={outdated} sub="Update verfügbar" color="var(--warn-text)" />
-            <Stat label="davon mit Sicherheitslücke" value={withCve} sub="Zuerst updaten" color="var(--danger-text)" />
-            <Stat label="Aktuell" value={scopeItems.length - outdated} sub={pendingCount > 0 ? `davon ${pendingCount} in Arbeit (PR/Commit)` : 'Auf dem neuesten Stand'} color="var(--accent)" />
+            <Stat label="Mit Sicherheitslücke" value={withCve} sub="Zuerst updaten" color="var(--danger-text)" />
+            <Stat label="Aktuell" value={scopeItems.length - outdated - unknownCount} sub={pendingCount > 0 ? `davon ${pendingCount} in Arbeit (PR/Commit)` : 'Auf dem neuesten Stand'} color="var(--accent)" />
           </section>
 
           <section class="filters" aria-label="Suche und Filter">
@@ -382,7 +477,16 @@ export function App() {
           </section>
 
           <section class="card list" aria-label="Einträge">
-            {sources.length === 0 && <div class="empty">Noch keine Quelle. Füge oben rechts dein erstes Git-Repository oder deinen ersten Server hinzu.</div>}
+            {sources.length === 0 && (
+              <div class="welcome">
+                <h2 style={{ fontSize: '18px' }}>Willkommen bei lxnEye</h2>
+                <p class="hint" style={{ maxWidth: '520px' }}>Verbinde dein GitHub- oder GitLab-Konto und wähle aus, welche Repositories beobachtet werden. Server und Kubernetes fügst du in den Einstellungen unter Quellen hinzu.</p>
+                <div class="actions" style={{ justifyContent: 'center' }}>
+                  <button class="btn primary" onClick={() => go('#/einstellungen/konten')}>Konto verbinden</button>
+                  <button class="btn" onClick={() => setShowAdd(true)}>Server oder Kubernetes hinzufügen</button>
+                </div>
+              </div>
+            )}
             {sources.length > 0 && rows.length === 0 && (
               <div class="empty">{scopeItems.length === 0 ? 'Noch keine Daten für diese Auswahl.' : 'Keine Treffer für diese Suche oder diesen Filter.'}</div>
             )}
@@ -391,6 +495,7 @@ export function App() {
                 key={it.id}
                 it={it}
                 showSource={!cur}
+                live={prLive}
                 selectable={selectable(it)}
                 selected={selected.has(it.id)}
                 onToggle={() => toggle(it.id)}
@@ -414,6 +519,7 @@ export function App() {
             </div>
           )}
         </main>
+        )}
       </div>
 
       {detailItem && detail && (
@@ -421,6 +527,7 @@ export function App() {
           item={detailItem}
           mode={detail.mode}
           settings={settings}
+          live={prLive}
           onClose={() => setDetail(null)}
           onToItem={() => setDetail({ id: detailItem.id, mode: 'item' })}
           onUpdate={(to) => requestUpdate(detailItem, to)}
@@ -432,6 +539,7 @@ export function App() {
         <AddSourceDialog
           sources={sources}
           aiConnected={settings.ai.connected}
+          onOpenAccounts={() => go('#/einstellungen/konten')}
           onClose={() => setShowAdd(false)}
           onCreated={load}
           onOpenAi={() => setShowAi(true)}
@@ -462,6 +570,16 @@ export function App() {
             const c = confirm;
             setConfirm(null);
             void doUpdate(c.it, c.to);
+          }}
+        />
+      )}
+      {pickAccount && (
+        <RepoPickerDialog
+          account={pickAccount}
+          onClose={() => setPickAccount(null)}
+          onSaved={(msg) => {
+            notify(msg);
+            void load();
           }}
         />
       )}
@@ -515,6 +633,7 @@ function UpdateMenu(props: { it: Item; busy: boolean; onUpdate: (to?: string) =>
             <button key={c.version} role="menuitem" onClick={() => pick(c)}>
               <span class={`badge ${c.level}`}>{c.level}</span>
               <span class="ver">{c.version}</span>
+              {fixesCves(it, c.version) && <span class="badge ok">behebt CVE</span>}
               {c.blocked && <span class="badge warn tip" data-tip={c.blocked}>Renovate-Regel</span>}
             </button>
           ))}
@@ -526,6 +645,7 @@ function UpdateMenu(props: { it: Item; busy: boolean; onUpdate: (to?: string) =>
 
 function ItemRow(props: {
   it: Item;
+  live: Record<string, PrStatus>;
   selectable: boolean;
   selected: boolean;
   onToggle: () => void;
@@ -583,18 +703,25 @@ function ItemRow(props: {
             </button>
           );
         })}
-        {open && !pending && it.cves.length > 0 && (
-          <button class="badge danger tip" data-tip="Bekannte Sicherheitslücke (CVE) in der installierten Version. Klicken für Details." aria-label="Sicherheitslücke, Details öffnen" onClick={() => props.onOpen('badge')}>
+        {it.cves.length > 0 && (
+          <button class="badge danger tip" data-tip={`Bekannte Sicherheitslücke (CVE) in der installierten Version${it.cves.find((c) => c.fixed)?.fixed ? `, behoben ab ${it.cves.find((c) => c.fixed)?.fixed}` : ''}${open ? '' : '. Es ist noch keine neuere Version bekannt'}. Klicken für Details.`} aria-label="Sicherheitslücke, Details öffnen" onClick={() => props.onOpen('badge')}>
             CVE
           </button>
         )}
-        {!open && <span class="badge ok tip" data-tip="Die neueste Version ist bereits installiert.">aktuell</span>}
+        {!open && it.latest !== null && <span class="badge ok tip" data-tip="Die neueste Version ist bereits installiert.">aktuell</span>}
+        {!open && it.latest === null && (
+          <span class="badge neutral tip" tabindex={0} data-tip={it.note ? `Die neueste Version konnte nicht ermittelt werden: ${it.note}` : 'Für diesen Eintrag gibt es keine Versionsprüfung.'}>
+            nicht prüfbar
+          </span>
+        )}
         {open && !pending && it.renovatePrs.map((p) => (
           <a key={p.number} class="badge warn tip" data-tip={`Renovate hat dafür schon einen offenen Pull Request: ${p.title}`} href={p.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
             Renovate #{p.number}
           </a>
         ))}
+        {open && !pending && it.renovatePrs.map((p) => (p.sourceId ? <ChecksBadge key={`c${p.number}`} status={props.live[`${p.sourceId}:${p.number}`]} /> : null))}
         {it.aiFound && <span class="badge ai tip" data-tip="Von der KI erkannt, nicht von einem Standard-Scan. Bitte stichprobenartig prüfen.">KI</span>}
+        {pending && it.update?.prNumber && <ChecksBadge status={props.live[`${it.update.sourceId}:${it.update.prNumber}`]} />}
         {pending && (
           it.update?.prUrl ? (
             <a class="badge ok tip" data-tip="Das Update wurde in Git eingereicht und wartet auf Merge oder Deploy. Klicken öffnet den Pull Request." href={it.update.prUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>

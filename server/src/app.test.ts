@@ -182,12 +182,13 @@ describe('Server in Produktion', () => {
     }
     expect((await post({ title: 'x', url: 'https://a.de', icon: 'i:gibtsnicht' })).statusCode).toBe(400);
     expect((await post({ title: 'x', url: 'https://a.de', icon: 'e:<b>' })).statusCode).toBe(400);
+    expect((await post({ title: 'x', url: 'https://a.de', icon: 'e:📘' })).statusCode).toBe(400); // nur eingebaute Symbole
     expect((await post({ title: 'x', url: 'https://a.de', extra: 1 })).statusCode).toBe(400);
 
     const ok = await post({ title: 'Grafana', url: 'http://192.168.1.5:3000/', icon: 'i:chart' });
     expect(ok.statusCode).toBe(201);
     const id = ok.json().link.id;
-    expect((await post({ title: 'Wiki', url: 'https://wiki.example.com', icon: 'e:📘' })).statusCode).toBe(201);
+    expect((await post({ title: 'Wiki', url: 'https://wiki.example.com', icon: 'i:book' })).statusCode).toBe(201);
     const list = (await app.inject({ method: 'GET', url: '/api/links', headers: { ...H, cookie } })).json().links;
     expect(list.map((l: { title: string }) => l.title)).toEqual(['Grafana', 'Wiki']);
     const upd = await app.inject({ method: 'PATCH', url: `/api/links/${id}`, headers: hdr, payload: { title: 'Grafana 2', url: 'https://g.example.com', icon: 'i:server' } });

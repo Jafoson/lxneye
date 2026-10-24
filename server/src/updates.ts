@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Ctx, ItemRow, SourceRow, UpdateRow } from './ctx.js';
-import { decrypt } from './crypto.js';
 import { audit, getSetting, now } from './db.js';
-import { GitHub, parseGithubUrl } from './git/github.js';
+import { openRepo } from './git/open.js';
+import type { GitApi, RepoRef } from './git/provider.js';
 import { applyPatch, PatchError, type Locator } from './lib/patch.js';
 import type { Cand } from './lib/versions.js';
 
@@ -22,9 +22,9 @@ export function updateMode(ctx: Ctx): 'pr' | 'commit' {
 const getItem = (ctx: Ctx, id: string): ItemRow | undefined => ctx.db.prepare('SELECT * FROM items WHERE id = ?').get(id) as ItemRow | undefined;
 const getSrc = (ctx: Ctx, id: string): SourceRow | undefined => ctx.db.prepare('SELECT * FROM sources WHERE id = ?').get(id) as SourceRow | undefined;
 
-function client(ctx: Ctx, src: SourceRow): { gh: GitHub; repo: ReturnType<typeof parseGithubUrl> } {
-  const token = src.credential_enc ? decrypt(ctx.key, src.credential_enc) : undefined;
-  return { gh: new GitHub(token), repo: parseGithubUrl(src.url ?? '') };
+export async function client(ctx: Ctx, src: SourceRow): Promise<{ gh: GitApi; repo: RepoRef }> {
+  const o = await openRepo(ctx, src);
+  return { gh: o.api, repo: o.repo };
 }
 
 /**
@@ -96,7 +96,7 @@ interface Prepared {
  * Jede Änderung wird ganz oder gar nicht übernommen. Mehrere Änderungen an derselben Datei bauen aufeinander auf.
  * Streng: der erste Fehler bricht ab. Tolerant: fehlerhafte Änderungen werden übersprungen und gemeldet.
  */
-async function prepareChanges(gh: GitHub, repo: ReturnType<typeof parseGithubUrl>, base: string, changes: Change[], tolerant: boolean): Promise<Prepared> {
+async function prepareChanges(gh: GitApi, repo: RepoRef, base: string, changes: Change[], tolerant: boolean): Promise<Prepared> {
   const files = new Map<string, { sha: string; content: string }>();
   const errors = new Map<number, string>();
   for (const [ci, ch] of changes.entries()) {
@@ -132,7 +132,7 @@ async function applyChanges(
   ctx: Ctx,
   o: { src: SourceRow; changes: Change[]; kind: 'update' | 'rollback'; parentId: string | null; actor: string | null },
 ): Promise<UpdateRow[]> {
-  const { gh, repo } = client(ctx, o.src);
+  const { gh, repo } = await client(ctx, o.src);
   const mode = updateMode(ctx);
   const base = await gh.defaultBranch(repo);
   const prepared = await prepareChanges(gh, repo, base, o.changes, false); // erst alles vorbereiten: scheitert etwas, wird nichts geschrieben
@@ -240,7 +240,7 @@ async function planBatch(ctx: Ctx, inputs: BatchInput[]): Promise<Plan[]> {
   const bySrc = new Map<string, Plan[]>();
   for (const p of plans) if (!p.error && p.src) bySrc.set(p.src.id, [...(bySrc.get(p.src.id) ?? []), p]);
   for (const group of bySrc.values()) {
-    const { gh, repo } = client(ctx, (group[0] as Plan).src as SourceRow);
+    const { gh, repo } = await client(ctx, (group[0] as Plan).src as SourceRow);
     try {
       const base = await gh.defaultBranch(repo);
       const { errors } = await prepareChanges(gh, repo, base, group.map((p) => p.change as Change), true);
@@ -355,7 +355,7 @@ export async function rollbackUpdate(ctx: Ctx, updateId: string, actor: string |
   if (rows.every((r) => r.status === 'reverted' || r.status === 'closed')) throw new UpdateError('Dieses Update wurde bereits zurückgenommen.', 409);
   const src = getSrc(ctx, upd.target_source_id);
   if (!src) throw new UpdateError('Quelle nicht gefunden', 404);
-  const { gh, repo } = client(ctx, src);
+  const { gh, repo } = await client(ctx, src);
   const mark = (status: UpdateRow['status']): void => {
     for (const r of rows) ctx.db.prepare('UPDATE updates SET status = ? WHERE id = ?').run(status, r.id);
   };
@@ -405,7 +405,7 @@ export async function refreshUpdates(ctx: Ctx, sourceId: string): Promise<void> 
   if (!src || src.kind !== 'git') return;
   const open = ctx.db.prepare("SELECT DISTINCT pr_number FROM updates WHERE target_source_id = ? AND status = 'open' AND pr_number IS NOT NULL").all(sourceId) as { pr_number: number }[];
   if (open.length === 0) return;
-  const { gh, repo } = client(ctx, src);
+  const { gh, repo } = await client(ctx, src);
   for (const { pr_number } of open) {
     try {
       const pr = await gh.pr(repo, pr_number);

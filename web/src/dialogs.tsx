@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { api } from './api';
+import { ChecksBadge } from './checks';
 import { ICON_KEYS, iconLabel, LinkIcon } from './icons';
-import type { Item, QuickLink, Section, Settings, Source, SummaryResponse } from './types';
-import { BUMP_EXPLAIN, canRollback, KIND_LABEL, pendingLabel } from './util';
+import type { Item, PrStatus, QuickLink, Section, Settings, Source, SummaryResponse } from './types';
+import { BUMP_EXPLAIN, canRollback, fixesCves, KIND_LABEL, pendingLabel } from './util';
 
-function Modal(props: { label: string; onClose: () => void; top?: boolean; children: ComponentChildren }) {
+export function Modal(props: { label: string; onClose: () => void; top?: boolean; children: ComponentChildren }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
@@ -49,6 +50,7 @@ export function DetailDialog(props: {
   item: Item;
   mode: 'badge' | 'item';
   settings: Settings;
+  live: Record<string, PrStatus>;
   onClose: () => void;
   onToItem: () => void;
   onUpdate: (to: string) => void;
@@ -119,7 +121,7 @@ export function DetailDialog(props: {
           <span class="hint">Zielversion</span>
           {[...item.candidates].reverse().map((c) => (
             <button key={c.version} class="choice" aria-pressed={to === c.version} onClick={() => setTo(c.version)} style={{ minHeight: '36px', padding: '0 12px' }}>
-              {c.level} <span class="mono">{c.version}</span>
+              {c.level} <span class="mono">{c.version}</span>{fixesCves(item, c.version) ? ' · behebt CVE' : ''}
             </button>
           ))}
         </div>
@@ -235,6 +237,7 @@ export function DetailDialog(props: {
         )}
         {item.bump !== '' && !pending && !item.updatable && item.updateHint && <p class="hint">{item.updateHint}</p>}
         {pending && <span style={{ alignSelf: 'center', fontWeight: 600 }}>{pending}</span>}
+        {pending && item.update?.prNumber && <ChecksBadge status={props.live[`${item.update.sourceId}:${item.update.prNumber}`]} />}
         {canRollback(item) && (
           <button class="btn" onClick={props.onRollback}>
             Rollback
@@ -262,11 +265,12 @@ const KIND_HINT: Record<Source['kind'], string> = {
 export function AddSourceDialog(props: {
   sources: Source[];
   aiConnected: boolean;
+  onOpenAccounts: () => void;
   onClose: () => void;
   onCreated: () => void;
   onOpenAi: () => void;
 }) {
-  const [kind, setKind] = useState<Source['kind']>('git');
+  const [kind, setKind] = useState<Source['kind']>('server');
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
@@ -337,7 +341,7 @@ export function AddSourceDialog(props: {
         </button>
       </div>
       <div role="group" aria-label="Typ der Quelle" class="row-flex">
-        {(['git', 'kubernetes', 'server'] as const).map((k) => (
+        {(['server', 'kubernetes', 'git'] as const).map((k) => (
           <button key={k} class="choice" aria-pressed={kind === k} onClick={() => setKind(k)}>
             {KIND_LABEL[k]}
           </button>
@@ -375,6 +379,15 @@ export function AddSourceDialog(props: {
         )}
       </div>
       <p class="hint">{KIND_HINT[kind]}</p>
+      {kind === 'git' && (
+        <div class="box">
+          <h3>Besser über ein Konto</h3>
+          <p class="hint">Melde dich bei GitHub oder GitLab an und wähle aus der Liste deiner Repositories. Das geht schneller, und private Repos brauchen keinen eigenen Token. Diese Eingabe ist für ein einzelnes Repository per Adresse.</p>
+          <div>
+            <button class="btn outline" onClick={() => { props.onClose(); props.onOpenAccounts(); }}>Zu den Konten</button>
+          </div>
+        </div>
+      )}
       {kind === 'git' && (
         <p class="hint">
           Token für private Repos: bei GitHub einen <strong>Fine-grained Token</strong> erstellen, genau dieses Repository auswählen und „Contents: Read-only“ erlauben. Für Updates zusätzlich „Contents“ und „Pull requests“ auf „Read and write“. Bei einem klassischen Token reicht der Scope „repo“.
@@ -674,6 +687,7 @@ export function EditSourceDialog(props: { source: Source; sources: Source[]; onC
           Gespeicherten Token entfernen
         </label>
       )}
+      {src.kind === 'git' && src.accountName && <p class="hint">Zugang über das verbundene Konto <strong>{src.accountName}</strong> ({src.provider === 'gitlab' ? 'GitLab' : 'GitHub'}). Ein hier hinterlegter Token wird in diesem Fall nicht verwendet.</p>}
       {src.kind === 'git' && <p class="hint">Eine geänderte URL oder ein neuer Token startet automatisch einen neuen Scan.</p>}
       {error && <p class="box danger">{error}</p>}
       <div class="actions" style={{ justifyContent: 'flex-end' }}>
@@ -890,7 +904,7 @@ export function BatchDialog(props: { items: Item[]; mode: 'pr' | 'commit'; prese
                   <option value="">nicht updaten</option>
                   {[...i.candidates].reverse().map((c) => (
                     <option key={c.version} value={c.version}>
-                      {c.level} {c.version}{c.blocked ? ' ⚠' : ''}
+                      {c.level} {c.version}{fixesCves(i, c.version) ? ' · behebt CVE' : ''}{c.blocked ? ' ⚠' : ''}
                     </option>
                   ))}
                 </select>
@@ -953,16 +967,14 @@ export function BatchDialog(props: { items: Item[]; mode: 'pr' | 'commit'; prese
 
 export function LinkDialog(props: { link: QuickLink | null; onClose: () => void; onSaved: () => void }) {
   const cur = props.link;
-  const startsEmoji = cur?.icon.startsWith('e:') ?? false;
   const [title, setTitle] = useState(cur?.title ?? '');
   const [url, setUrl] = useState(cur?.url ?? '');
-  const [iconKey, setIconKey] = useState(cur && !startsEmoji ? cur.icon.slice(2) : 'link');
-  const [emoji, setEmoji] = useState(startsEmoji ? (cur?.icon.slice(2) ?? '') : '');
+  const [iconKey, setIconKey] = useState(cur && ICON_KEYS.includes(cur.icon.replace(/^i:/, '')) ? cur.icon.replace(/^i:/, '') : 'link');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const icon = emoji.trim() ? `e:${emoji.trim()}` : `i:${iconKey}`;
+  const icon = `i:${iconKey}`;
   const looksValid = /^https?:\/\/\S+$/i.test(url.trim());
 
   async function save() {
@@ -1016,15 +1028,11 @@ export function LinkDialog(props: { link: QuickLink | null; onClose: () => void;
         <legend>Symbol</legend>
         <div class="icon-grid" role="radiogroup" aria-label="Symbol wählen">
           {ICON_KEYS.map((k) => (
-            <button key={k} role="radio" aria-checked={!emoji.trim() && iconKey === k} aria-label={iconLabel(k)} title={iconLabel(k)} class="icon-btn" onClick={() => { setIconKey(k); setEmoji(''); }}>
+            <button key={k} role="radio" aria-checked={iconKey === k} aria-label={iconLabel(k)} title={iconLabel(k)} class="icon-btn" onClick={() => setIconKey(k)}>
               <LinkIcon icon={`i:${k}`} size={20} />
             </button>
           ))}
         </div>
-        <label class="field" style={{ maxWidth: '260px' }}>
-          Oder ein eigenes Zeichen (z. B. Emoji)
-          <input type="text" value={emoji} maxLength={8} placeholder="📘" onInput={(e) => setEmoji((e.target as HTMLInputElement).value)} />
-        </label>
       </fieldset>
 
       <div class="row-flex">

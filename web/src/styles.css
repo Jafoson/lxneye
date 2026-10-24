@@ -222,6 +222,18 @@ p {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  /* bleibt beim Scrollen sichtbar, vor allem auf der langen Einstellungsseite */
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  align-self: flex-start;
+}
+@media (max-width: 700px) {
+  .side {
+    position: static;
+    max-height: none;
+  }
 }
 .nav {
   display: flex;
@@ -892,4 +904,138 @@ select.compact {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+
+.badge.neutral {
+  background: var(--line-soft);
+  color: var(--muted);
+}
+
+/* Einstellungsseite */
+/* Die Einstellungen liegen im Hauptbereich neben der Seitenleiste */
+.settings {
+  max-width: 980px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.settings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-nav a {
+  min-height: 36px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13px;
+}
+.settings-nav a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sec {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scroll-margin-top: 16px;
+}
+.sec h2 {
+  font-size: 18px;
+}
+.sgroup {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.slist {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.srow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.srow:last-child {
+  border-bottom: 0;
+}
+.srow-name {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+.srow-count {
+  min-width: 130px;
+}
+.brand-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.welcome {
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.subnav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px 20px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+.subnav a {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+.subnav a:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.subnav a[aria-current='true'] {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  font-weight: 600;
 }

@@ -38,6 +38,30 @@ CREATE TABLE IF NOT EXISTS sources (
   last_scan_at INTEGER,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('github','gitlab')),
+  host TEXT NOT NULL,
+  login TEXT NOT NULL,
+  display_name TEXT,
+  token_enc TEXT NOT NULL,
+  refresh_enc TEXT,
+  expires_at INTEGER,
+  scope TEXT,
+  via TEXT NOT NULL DEFAULT 'token',
+  created_at INTEGER NOT NULL,
+  UNIQUE (provider, host, login)
+);
+CREATE TABLE IF NOT EXISTS device_flows (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  device_code_enc TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  interval_s INTEGER NOT NULL,
+  last_poll INTEGER NOT NULL DEFAULT 0,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -130,6 +154,9 @@ export function openDb(dataDir: string): Db {
   db.exec(SCHEMA);
   ensureColumn(db, 'items', 'candidates', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, 'items', 'server', 'TEXT');
+  ensureColumn(db, 'items', 'note', 'TEXT');
+  ensureColumn(db, 'sources', 'provider', 'TEXT');
+  ensureColumn(db, 'sources', 'account_id', 'TEXT');
   ensureColumn(db, 'updates', 'group_id', 'TEXT');
   return db;
 }

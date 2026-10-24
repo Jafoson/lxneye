@@ -1,11 +1,7 @@
 import { fetchJson, HttpError, safeFetch } from '../http.js';
+import { InputError, type GitApi, type RemoteRepo, type RepoRef } from './provider.js';
 
-export class InputError extends Error {}
-
-export interface RepoRef {
-  owner: string;
-  repo: string;
-}
+export { InputError, type RepoRef };
 
 export function parseGithubUrl(url: string): RepoRef {
   let u: URL;
@@ -28,7 +24,7 @@ interface TreeEntry {
   size?: number;
 }
 
-export class GitHub {
+export class GitHub implements GitApi {
   constructor(private token: string | undefined) {}
 
   private headers(): Record<string, string> {
@@ -85,6 +81,26 @@ export class GitHub {
       'Gehört das Repo einer Organisation, muss die Organisation den Token freigeben. Klassischer Token: Scope "repo". ' +
       `Prüfe außerdem die Schreibweise der URL (${name}).`
     );
+  }
+
+  async me(): Promise<{ login: string; name: string | null }> {
+    const u = await this.json<{ login: string; name: string | null }>('https://api.github.com/user');
+    return { login: u.login, name: u.name };
+  }
+
+  /** Alle Repositories, auf die der Zugang zugreift: eigene, als Mitarbeiter und über Organisationen. */
+  async listRepos(): Promise<RemoteRepo[]> {
+    const out: RemoteRepo[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const batch = await this.json<
+        { full_name: string; html_url: string; private: boolean; archived: boolean; fork: boolean; default_branch: string | null; description: string | null; pushed_at: string | null }[]
+      >(`https://api.github.com/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member&page=${page}`);
+      for (const p of batch) {
+        out.push({ fullName: p.full_name, url: p.html_url, private: p.private, archived: p.archived, fork: p.fork, defaultBranch: p.default_branch, description: p.description, pushedAt: p.pushed_at });
+      }
+      if (batch.length < 100) break;
+    }
+    return out;
   }
 
   async defaultBranch(r: RepoRef): Promise<string> {
@@ -145,6 +161,35 @@ export class GitHub {
   async pr(r: RepoRef, n: number): Promise<{ state: 'open' | 'closed'; merged: boolean }> {
     const pr = await this.json<{ state: 'open' | 'closed'; merged: boolean }>(this.url(r, `/pulls/${n}`));
     return { state: pr.state, merged: pr.merged };
+  }
+
+  /** Zustand eines Pull Requests samt Commit des Branches (für die Prüfläufe). */
+  async prHead(r: RepoRef, n: number): Promise<{ state: 'open' | 'closed'; merged: boolean; sha: string }> {
+    const pr = await this.json<{ state: 'open' | 'closed'; merged: boolean; head: { sha: string } }>(this.url(r, `/pulls/${n}`));
+    return { state: pr.state, merged: pr.merged, sha: pr.head.sha };
+  }
+
+  /** Prüfläufe und Commit-Status. `restricted`, wenn der Token sie nicht lesen darf. */
+  async checks(r: RepoRef, sha: string): Promise<{ runs: { name: string; status: string; conclusion: string | null }[]; statuses: { context: string; state: string }[]; restricted: boolean }> {
+    if (!/^[0-9a-f]{7,64}$/i.test(sha)) throw new Error('Ungültiger Commit');
+    let restricted = false;
+    const runs = await this.json<{ check_runs: { name: string; status: string; conclusion: string | null }[] }>(this.url(r, `/commits/${sha}/check-runs?per_page=100`)).then(
+      (x) => x.check_runs,
+      (e: Error) => {
+        if (/\(40[34]\)|403|404/.test(e.message)) restricted = true;
+        else throw e;
+        return [];
+      },
+    );
+    const statuses = await this.json<{ statuses: { context: string; state: string }[] }>(this.url(r, `/commits/${sha}/status`)).then(
+      (x) => x.statuses,
+      (e: Error) => {
+        if (/\(40[34]\)|403|404/.test(e.message)) restricted = true;
+        else throw e;
+        return [];
+      },
+    );
+    return { runs, statuses, restricted };
   }
 
   async closePr(r: RepoRef, n: number): Promise<void> {

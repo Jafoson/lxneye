@@ -1,3 +1,4 @@
+import { gt, valid, compare } from 'semver';
 import { fetchJson } from '../http.js';
 
 export interface Cve {
@@ -47,13 +48,16 @@ export async function npmVulnerabilities(pkgs: { name: string; version: string }
       for (const id of ids) {
         try {
           const v = await getVuln(id);
-          const fixed =
-            v.affected
-              ?.filter((a) => a.package?.name === pkgName)
-              .flatMap((a) => a.ranges ?? [])
-              .flatMap((r) => r.events ?? [])
-              .map((e) => e.fixed)
-              .find(Boolean) ?? null;
+          // Eine Lücke kann in mehreren Zweigen behoben sein (15.5.28, 16.4.1 …): relevant ist die nächste Version über der installierten
+          const installed = (chunk[i] as { version: string }).version;
+          const fixes = (v.affected ?? [])
+            .filter((a) => a.package?.name === pkgName)
+            .flatMap((a) => a.ranges ?? [])
+            .flatMap((r) => r.events ?? [])
+            .map((e) => e.fixed)
+            .filter((f): f is string => !!f && !!valid(f));
+          const above = fixes.filter((f) => gt(f, installed)).sort(compare);
+          const fixed = above[0] ?? fixes.sort(compare).at(-1) ?? null;
           const sev = (v.database_specific?.severity ?? '').toUpperCase();
           list.push({
             id: v.aliases?.find((a) => a.startsWith('CVE-')) ?? v.id,

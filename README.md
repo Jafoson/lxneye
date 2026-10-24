@@ -6,7 +6,8 @@ Selbst gehostete Übersicht über veraltete Abhängigkeiten und Container-Images
 
 ## Funktionen
 
-- **Git-Repositories (GitHub)**: erkennt `package.json`, Dockerfiles, Compose-Dateien, Helm-`values.yaml` und Kubernetes-YAML. Private Repos per Token.
+- **Konten verbinden (GitHub und GitLab)**: Du meldest dich mit einem Gerätecode an (oder fügst einen Token ein), lxnEye zeigt alle deine Repositories, und du wählst aus, welche beobachtet werden. Private Repositories brauchen keinen eigenen Token mehr.
+- **Git-Repositories (GitHub und GitLab)**: erkennt `package.json`, Dockerfiles, Compose-Dateien, Helm-`values.yaml` und Kubernetes-YAML. Private Repos per Token.
 - **Server und Kubernetes** über einen kleinen Agent, der nur ausgehend per HTTPS meldet, was läuft.
 - **Updates**: ändert die Version in der Datei und erstellt einen Pull Request (Standard) oder einen Direkt-Commit. **Rollback** schließt den PR bzw. spielt die Gegen-Änderung ein.
 - **Sicherheitslücken** für npm-Pakete über OSV.dev.
@@ -23,6 +24,16 @@ docker compose up -d
 ```
 
 Caddy holt automatisch ein Zertifikat. Beim SSO-Anbieter als Redirect-URI eintragen: `https://lxneye.example.com/auth/callback`.
+
+## Konten und Repository-Auswahl
+
+Oben auf **Einstellungen** klicken. Dort steht **Konten** an erster Stelle: GitHub oder GitLab wählen und sich anmelden. Unter **Quellen** siehst du alles, was beobachtet wird, und fügst Server, Kubernetes oder einzelne Repositories von Hand hinzu. Dazu gehören auch KI und der Update-Modus. Danach erscheint die Liste aller erreichbaren Repositories (eigene, als Mitarbeiter und über Organisationen) mit Suche und Filtern. Mit den Haken legst du fest, welche lxnEye beobachtet. Abgewählte Repositories werden samt ihrer Einträge in lxnEye entfernt, das Repository selbst bleibt unberührt.
+
+**Anmeldung per Gerätecode** (empfohlen): lxnEye zeigt einen Code, du bestätigst ihn auf github.com bzw. gitlab.com. Es gibt kein Passwort, keine Weiterleitung und kein Client-Secret. Dafür einmalig eine OAuth-App anlegen und die Client-ID in die `.env` eintragen (`GITHUB_CLIENT_ID`, `GITLAB_CLIENT_ID`, siehe `deploy/.env.example`). Bei GitHub muss "Enable Device Flow" aktiv sein, bei GitLab (ab 17.1) die App "nicht vertraulich".
+
+**Oder per Token:** Ohne OAuth-App fügst du einen Token ein (GitHub: Fine-grained Token mit Contents, Pull requests und Checks, oder klassisch mit `repo`; GitLab: Scope `api`).
+
+Selbst gehostetes GitLab: `GITLAB_URL=https://gitlab.example.com`. Die Zugangstokens liegen verschlüsselt in der Datenbank. GitLab-Tokens laufen nach zwei Stunden ab, lxnEye erneuert sie automatisch.
 
 ## Builds und Releases (GitHub Actions)
 
@@ -86,7 +97,7 @@ Ohne lokales Node 24: `docker run --rm -v "$PWD":/app -w /app/server node:24-boo
 
 ## Bekannte Grenzen dieser Version
 
-- Nur **GitHub** als Git-Anbieter (die Anbindung ist gekapselt, GitLab/Gitea folgen).
+- Git-Anbieter sind **GitHub** (github.com) und **GitLab** (gitlab.com oder selbst gehostet). GitLab ist gegen die API-Dokumentation und mit nachgebauten Antworten getestet, aber noch nicht gegen eine echte Instanz. Gitea, Forgejo und Bitbucket fehlen.
 - CVE-Daten nur für **npm**. Für Container-Images ist ein Trivy-Scan geplant.
 - Private Container-Registries brauchen noch hinterlegte Zugangsdaten (nicht umgesetzt).
 - Release Notes werden für npm-Pakete und `ghcr.io`-Images gefunden. Bei anderen Images fehlt die Zuordnung zum Quell-Repository.
